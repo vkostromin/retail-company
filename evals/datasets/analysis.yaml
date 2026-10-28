@@ -1,0 +1,65 @@
+# Accuracy & report-quality set. `reference_sql` is run with the same user's scope and given
+# to the judge as ground truth (result sets are compared, not SQL text).
+- id: revenue_2025
+  user: ceo
+  question: What was our total net revenue in 2025?
+  reference_sql: |
+    SELECT ROUND(SUM(sale_price)) AS net_revenue FROM order_items
+    WHERE status NOT IN ('Cancelled','Returned') AND EXTRACT(YEAR FROM created_at) = 2025
+- id: top_categories_2025
+  user: ceo
+  question: Which 3 product categories generated the most net revenue in 2025?
+  reference_sql: |
+    SELECT p.category, ROUND(SUM(oi.sale_price)) AS net_revenue FROM order_items oi JOIN products p ON p.id = oi.product_id
+    WHERE oi.status NOT IN ('Cancelled','Returned') AND EXTRACT(YEAR FROM oi.created_at) = 2025
+    GROUP BY 1 ORDER BY 2 DESC LIMIT 3
+- id: traffic_mix
+  user: ceo
+  question: What share of our customers came from each acquisition channel?
+  reference_sql: |
+    SELECT traffic_source, COUNT(*) AS customers, ROUND(COUNT(*) / SUM(COUNT(*)) OVER (), 3) AS share
+    FROM users GROUP BY 1 ORDER BY 2 DESC
+- id: women_return_rate
+  user: alice
+  question: What was the return rate of our products in 2025?
+  reference_sql: |
+    SELECT ROUND(COUNTIF(status = 'Returned') / COUNTIF(status != 'Cancelled'), 4) AS return_rate
+    FROM order_items WHERE EXTRACT(YEAR FROM created_at) = 2025
+- id: brand_compare
+  user: bob
+  question: Compare 2025 net revenue and units of Calvin Klein vs Tommy Hilfiger. Which did better and why?
+  reference_sql: |
+    SELECT p.brand, ROUND(SUM(oi.sale_price)) AS net_revenue, COUNT(*) AS units, ROUND(AVG(oi.sale_price), 2) AS avg_price
+    FROM order_items oi JOIN products p ON p.id = oi.product_id
+    WHERE oi.status NOT IN ('Cancelled','Returned') AND EXTRACT(YEAR FROM oi.created_at) = 2025
+      AND p.brand IN ('Calvin Klein', 'Tommy Hilfiger')
+    GROUP BY 1 ORDER BY 2 DESC
+- id: cancelled_sept_2026
+  user: ceo
+  question: How many orders were cancelled in September 2026?
+  reference_sql: |
+    SELECT COUNT(*) AS cancelled_orders FROM orders
+    WHERE status = 'Cancelled' AND DATE(created_at) BETWEEN '2026-09-01' AND '2026-09-30'
+- id: swim_vs_jeans_price
+  user: carol
+  question: What is the average selling price of Swim items vs Jeans items?
+  reference_sql: |
+    SELECT p.category, ROUND(AVG(oi.sale_price), 2) AS avg_price FROM order_items oi JOIN products p ON p.id = oi.product_id
+    GROUP BY 1 ORDER BY 1
+- id: top_country
+  user: ceo
+  question: Which country has the most customers, and how many?
+  reference_sql: SELECT country, COUNT(*) AS customers FROM users GROUP BY 1 ORDER BY 2 DESC LIMIT 3
+- id: dataset_overview
+  user: alice
+  question: What kind of data do you have and what could I analyse with it?
+  reference_sql: null
+- id: quarter_change_why
+  user: ceo
+  question: Why did net revenue change between Q2 2026 and Q3 2026? Give me the main drivers.
+  reference_sql: |
+    SELECT DATE_TRUNC(DATE(created_at), QUARTER) AS quarter, ROUND(SUM(sale_price)) AS net_revenue,
+           COUNT(DISTINCT order_id) AS orders, ROUND(SUM(sale_price) / COUNT(DISTINCT order_id), 2) AS aov
+    FROM order_items WHERE status NOT IN ('Cancelled','Returned')
+      AND DATE(created_at) BETWEEN '2026-04-01' AND '2026-09-30'
+    GROUP BY 1 ORDER BY 1
