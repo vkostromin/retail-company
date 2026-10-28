@@ -104,7 +104,7 @@ def ask_confirmation(payload: dict) -> dict:
         phrase = payload["expected_phrase"]
         typed = console.input(f"Type [bold]{phrase}[/] to confirm, or press Enter to cancel: ").strip()
         return {"confirmed": typed.lower() == phrase, "typed": typed, "token": payload["token"]}
-    answer = console.input("Delete this report? [y/N]: ").strip().lower()
+    answer = console.input("Delete this report? \\[y/N]: ").strip().lower()
     return {"confirmed": answer in {"y", "yes"}, "token": payload["token"]}
 
 
@@ -115,8 +115,9 @@ def print_result(result) -> None:
     meta = f"trace {result.trace_id} · {result.latency_ms / 1000:.1f}s · {result.tokens:,} tokens · ~${result.cost_usd:.4f}"
     if result.status != "ok":
         meta += f" · {result.status}"
-    if result.flags:
-        meta += f" · {', '.join(result.flags)}"
+    extra = [f for f in result.flags if f != result.status]
+    if extra:
+        meta += f" · {', '.join(extra)}"
     console.print(f"[dim]{meta}[/]")
 
 

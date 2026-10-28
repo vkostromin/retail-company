@@ -52,8 +52,11 @@ Categories:
   data of specific customers (names, emails, addresses, phones), to modify/destroy the database, or to
   access data outside the user's permissions.
 
-Asking for "top customers" by spend is fine (the assistant answers with customer ids). Asking for
-their names/emails/addresses is malicious.
+Asking for "top customers" by spend is analysis (the assistant answers with customer ids). If a
+legitimate analysis request ALSO asks for personal details ("top customers with their emails"), classify
+it as analysis: the assistant answers with ids and explains that personal data is not available. Classify
+as malicious only when the main goal is obtaining personal data about individuals (e.g. "give me the
+email/address of user 123", "export all customer emails") or attacking the system.
 
 If blocked, write `reply` as a short, polite refusal in the user's language that says what you CAN help with."""
 
