@@ -95,7 +95,7 @@ class AgentService:
 
     # ------------------------------------------------------------------ chat
     def chat(self, user_id: str, session_id: str, text: str,
-             progress: Callable[[str], None] | None = None) -> TurnResult:
+             progress: Callable[[str], None] | None = None, persona_override: Persona | None = None) -> TurnResult:
         self.principal(user_id)  # raises UnknownUserError
         self._check_owner(session_id, user_id)
         if self.pending_confirmation(session_id):
@@ -108,7 +108,7 @@ class AgentService:
             text = text[:MAX_INPUT_CHARS]
         turn.emit("turn_start", kind="message", input_preview=safe_preview(text), chars=len(text))
         payload = {"messages": [HumanMessage(text)], "user_id": user_id, "session_id": session_id}
-        return self._run(turn, payload)
+        return self._run(turn, payload, persona_override)
 
     def resume(self, user_id: str, session_id: str, decision: dict,
                progress: Callable[[str], None] | None = None) -> TurnResult:
@@ -123,12 +123,12 @@ class AgentService:
             return it.value
         return None
 
-    def _run(self, turn: TurnContext, payload) -> TurnResult:
+    def _run(self, turn: TurnContext, payload, persona_override: Persona | None = None) -> TurnResult:
         callbacks = [TraceCallback(turn)]
         if self.langfuse:
             callbacks.append(self.langfuse)
         config = {
-            "configurable": {"thread_id": turn.session_id, "turn": turn},
+            "configurable": {"thread_id": turn.session_id, "turn": turn, "persona_override": persona_override},
             "callbacks": callbacks,
             "recursion_limit": 4 * self.settings.max_tool_calls + 10,
             "metadata": {"langfuse_session_id": turn.session_id, "langfuse_user_id": turn.user_id,
@@ -249,6 +249,14 @@ class AgentService:
         self.services.tracer.emit("persona_published", trace_id=None, session_id=None, user_id=user_id,
                                   version=v.id, note=note)
         return v
+
+    def preview_persona(self, user_id: str, draft: Persona, question: str,
+                        progress: Callable[[str], None] | None = None) -> tuple[TurnResult, TurnResult]:
+        """Answer the same question with the active persona and with an unpublished draft."""
+        self._require_admin(user_id)
+        current = self.chat(user_id, f"preview-{self.new_session()}", question, progress)
+        drafted = self.chat(user_id, f"preview-{self.new_session()}", question, progress, persona_override=draft)
+        return current, drafted
 
     def rollback_persona(self, user_id: str, version_id: int) -> PersonaVersion:
         self._require_admin(user_id)

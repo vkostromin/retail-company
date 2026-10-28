@@ -66,10 +66,13 @@ def compute_metrics(tracer: Tracer, days: int = 7, user_id: str | None = None) -
         for evs in by_trace.values() for e in evs if e["event"] == "feedback"
     )
     n = len(turns) or 1
+    # Blocked turns and pending confirmations are intended outcomes, not failures.
+    answered = status.get("ok", 0) + status.get("error", 0) + status.get("degraded", 0)
     return {
         "turns": len(turns),
         "status": dict(status),
-        "success_rate": round(status.get("ok", 0) / n, 3),
+        "success_rate": round(status.get("ok", 0) / answered, 3) if answered else None,
+        "block_rate": round(status.get("blocked", 0) / n, 3),
         "latency_ms_p50": median(latencies) if latencies else 0,
         "latency_ms_p95": _pct(latencies, 95),
         "avg_tokens_per_turn": round(sum(tokens) / n),

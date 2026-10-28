@@ -114,6 +114,9 @@ def build_graph(services, registry: ToolRegistry, checkpointer=None):
     def load_context(state: AgentState, config) -> dict:
         turn = _turn(config)
         persona = services.personas.active()
+        override = config["configurable"].get("persona_override")
+        if override is not None:  # admin preview of an unpublished draft
+            persona = persona.model_copy(update={"id": 0, "persona": override})
         prefs = services.prefs.get_all(state["user_id"])
         category = (state.get("verdict") or {}).get("category")
         examples, ids, mode = [], [], "skipped"
@@ -238,7 +241,8 @@ def build_graph(services, registry: ToolRegistry, checkpointer=None):
             text = f"Deleted {len(deleted)} report(s):\n{listing}"
             if len(deleted) < n:
                 text += f"\n({n - len(deleted)} had already been removed.)"
-            text += f"\n\nChanged your mind? Type /undo within {settings.undo_window_minutes} minutes to restore them."
+            text += (f"\n\nChanged your mind? Undo within {settings.undo_window_minutes} minutes "
+                     "(`/undo` in the CLI, or *Undo last delete* in the web app).")
         return {"messages": [AIMessage(text)], "pending_action": None}
 
     # ------------------------------------------------------------------ guard_output
