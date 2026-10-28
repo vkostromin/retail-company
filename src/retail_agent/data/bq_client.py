@@ -13,6 +13,8 @@ from ..resilience.errors import DependencyUnavailable
 from ..resilience.faults import FaultInjector
 from ..resilience.retry import call_with_retry, is_transient
 
+log = logging.getLogger(__name__)
+
 
 @dataclass
 class QueryResult:
@@ -51,7 +53,7 @@ class BigQueryRunner:
             project_id: Google Cloud project ID. If None, uses default credentials.
             dataset_id: BigQuery dataset ID. If None, uses default dataset.
         """
-        logging.info("Initializing BigQuery client")
+        log.info("Initializing BigQuery client")
         try:
             self.client = bigquery.Client(project=project_id, location=location)
             self.dataset_id = dataset_id
@@ -59,9 +61,9 @@ class BigQueryRunner:
             self.timeout_s = timeout_s
             self.faults = faults or FaultInjector()
             self.breaker = CircuitBreaker("bigquery")
-            logging.info(f"BigQuery client initialized for dataset: {self.dataset_id}")
+            log.info(f"BigQuery client initialized for dataset: {self.dataset_id}")
         except Exception as e:
-            logging.error(f"Failed to initialize BigQuery client: {e!s}")
+            log.error(f"Failed to initialize BigQuery client: {e!s}")
             raise
 
     def execute_query(self, sql_query: str) -> pd.DataFrame:
@@ -83,10 +85,10 @@ class BigQueryRunner:
 
         Raises google.api_core.exceptions.BadRequest on syntax/semantic errors.
         """
-        self.faults.check("bigquery")
         config = bigquery.QueryJobConfig(dry_run=True, use_query_cache=False, query_parameters=list(params))
 
         def _call() -> int:
+            self.faults.check("bigquery")
             job = self.client.query(sql_query, job_config=config)
             return int(job.total_bytes_processed or 0)
 
@@ -111,11 +113,11 @@ class BigQueryRunner:
         def _call() -> QueryResult:
             self.faults.check("bigquery")
             started = time.monotonic()
-            logging.info("Executing BigQuery query")
+            log.info("Executing BigQuery query")
             job = self.client.query(sql_query, job_config=config, timeout=self.timeout_s)
             rows = job.result(timeout=self.timeout_s, max_results=max_rows)
             df = rows.to_dataframe(create_bqstorage_client=False)
-            logging.info(f"Query completed successfully, returned {len(df)} rows")
+            log.info(f"Query completed successfully, returned {len(df)} rows")
             return QueryResult(
                 df=df,
                 bytes_processed=int(job.total_bytes_processed or 0),
@@ -134,7 +136,7 @@ class BigQueryRunner:
             )
         except Exception as e:
             if is_transient(e):
-                logging.error(f"BigQuery execution failed: {e!s}")
+                log.error(f"BigQuery execution failed: {e!s}")
                 raise DependencyUnavailable("bigquery", str(e)) from e
             raise
 
@@ -158,8 +160,8 @@ class BigQueryRunner:
                     "mode": field.mode,
                     "description": field.description or ""
                 })
-            logging.info(f"Retrieved schema for table {table_name}")
+            log.info(f"Retrieved schema for table {table_name}")
             return schema_info
         except Exception as e:
-            logging.error(f"Failed to get schema for table {table_name}: {e!s}")
+            log.error(f"Failed to get schema for table {table_name}: {e!s}")
             raise
