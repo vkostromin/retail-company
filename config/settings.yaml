@@ -1,0 +1,36 @@
+# Runtime settings. Every key can be overridden by an env var with the RA_ prefix,
+# e.g. RA_AGENT_MODEL=gemini-2.5-flash. Secrets never live here (see .env.example).
+
+gcp_project: null            # falls back to GOOGLE_CLOUD_PROJECT
+bq_dataset: bigquery-public-data.thelook_ecommerce
+bq_location: US
+
+# --- Models -----------------------------------------------------------------
+agent_model: gemini-3.5-flash          # tool-calling analyst loop
+fallback_model: gemini-2.5-flash       # different generation => independent failure modes
+guard_model: gemini-3.5-flash-lite     # cheap, fast input classifier
+judge_model: gemini-3.1-pro-preview    # offline evals only
+embedding_model: gemini-embedding-001
+vertex_location: global
+llm_timeout_s: 90
+llm_requests_per_minute: 60            # client-side limiter, keep under your quota
+
+# --- Cost & safety limits ---------------------------------------------------
+max_bytes_billed: 1000000000           # 1 GB hard cap per query (BigQuery rejects above)
+query_timeout_s: 60
+max_result_rows: 500                   # rows fetched from BigQuery
+preview_rows: 40                       # rows shown to the LLM
+max_sql_attempts: 4                    # per user turn, includes self-corrections
+max_tool_calls: 14                     # per user turn
+turn_token_budget: 250000              # input+output tokens per user turn
+
+# --- Destructive actions ----------------------------------------------------
+bulk_delete_threshold: 2               # above this, the user must type "delete N"
+undo_window_minutes: 30
+
+# --- Golden knowledge -------------------------------------------------------
+golden_top_k: 3
+golden_min_similarity: 0.60
+
+data_dir: .data
+reports_export_dir: out/reports

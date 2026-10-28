@@ -1,0 +1,31 @@
+# Prototype principals. In production identity comes from IAP/OIDC and entitlements
+# from IAM groups; the shape of the data is the same.
+#
+# scope: which products a user may analyse. Grants are additive (brand OR category OR
+# department). `all_products: true` disables product scoping.
+# role: admin (can edit the persona, see all traces) | analyst
+
+users:
+  ceo:
+    display_name: Dana (CEO)
+    role: admin
+    scope:
+      all_products: true
+
+  alice:
+    display_name: Alice (Head of Womenswear)
+    role: analyst
+    scope:
+      departments: [Women]
+
+  bob:
+    display_name: Bob (Brand Manager)
+    role: analyst
+    scope:
+      brands: [Calvin Klein, Diesel, Tommy Hilfiger]
+
+  carol:
+    display_name: Carol (Category Manager, Denim & Swim)
+    role: analyst
+    scope:
+      categories: [Jeans, Swim]
