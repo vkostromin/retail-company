@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.env
+.data/
+out/
+*.egg-info/
+.DS_Store
+# assignment brief is not redistributed
+task.md
