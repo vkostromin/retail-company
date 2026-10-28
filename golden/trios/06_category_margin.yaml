@@ -1,0 +1,19 @@
+id: category_margin
+question: Which product categories have the best and worst gross margin?
+interpretation: >
+  Gross margin = (sale_price - products.cost) / sale_price over sold, non-returned, non-cancelled
+  items. Report margin % together with revenue so small categories are not over-weighted.
+sql: |
+  SELECT p.department, p.category,
+         ROUND(SUM(oi.sale_price)) AS revenue,
+         ROUND(SUM(oi.sale_price - p.cost)) AS gross_profit,
+         ROUND(SUM(oi.sale_price - p.cost) / SUM(oi.sale_price), 3) AS gross_margin_pct
+  FROM order_items oi
+  JOIN products p ON p.id = oi.product_id
+  WHERE oi.status NOT IN ('Cancelled', 'Returned')
+  GROUP BY p.department, p.category
+  ORDER BY gross_margin_pct DESC
+report: >
+  Margins are fairly tight across categories; the spread between best and worst is several points.
+  High-revenue, low-margin categories are the priority for supplier renegotiation.
+tags: [product, category, margin, profitability]

@@ -1,0 +1,34 @@
+id: churn_spike
+question: Why did our churn rate spike last month?
+interpretation: >
+  Definition used by the analytics team: a customer churns when 90 days pass without a new
+  (non-cancelled) order; they are counted as churned in the month in which the 90 days elapse.
+  Churn rate = churned customers / customers active (ordering) in that month. To explain a spike,
+  compare the churned cohort's acquisition channel, first-order category and return experience
+  with the previous month's cohort.
+sql: |
+  WITH last_order AS (
+    SELECT user_id, MAX(DATE(created_at)) AS last_date
+    FROM orders
+    WHERE status != 'Cancelled'
+    GROUP BY user_id
+  ), churned AS (
+    SELECT DATE_TRUNC(DATE_ADD(last_date, INTERVAL 90 DAY), MONTH) AS month, COUNT(*) AS churned_customers
+    FROM last_order
+    WHERE DATE_ADD(last_date, INTERVAL 90 DAY) <= CURRENT_DATE()
+    GROUP BY month
+  ), active AS (
+    SELECT DATE_TRUNC(DATE(created_at), MONTH) AS month, COUNT(DISTINCT user_id) AS active_customers
+    FROM orders
+    GROUP BY month
+  )
+  SELECT c.month, c.churned_customers, a.active_customers,
+         ROUND(c.churned_customers / a.active_customers, 3) AS churn_rate
+  FROM churned c JOIN active a USING (month)
+  WHERE c.month >= DATE_SUB(DATE_TRUNC(CURRENT_DATE(), MONTH), INTERVAL 12 MONTH)
+  ORDER BY c.month
+report: >
+  Churn rate rose last month. The churned cohort skews to customers acquired three months earlier
+  through paid channels (Facebook/Display) with a single first order and an above-average return rate.
+  Actions: second-purchase incentive at day 30-60, review paid-channel targeting, investigate returns.
+tags: [churn, retention, cohort, why, spike, customers]

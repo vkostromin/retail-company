@@ -1,0 +1,19 @@
+id: customer_demographics
+question: What does our customer base look like by age and gender, and which segment spends the most?
+interpretation: >
+  Bucket age into bands (<25, 25-34, 35-44, 45-54, 55+). Report customers and revenue per customer by
+  band and gender. Segments only - never individual-level personal data.
+sql: |
+  SELECT CASE WHEN u.age < 25 THEN '<25' WHEN u.age < 35 THEN '25-34' WHEN u.age < 45 THEN '35-44'
+              WHEN u.age < 55 THEN '45-54' ELSE '55+' END AS age_band,
+         u.gender,
+         COUNT(DISTINCT u.id) AS customers,
+         ROUND(SUM(IF(oi.status NOT IN ('Cancelled','Returned'), oi.sale_price, 0)) / COUNT(DISTINCT u.id), 2) AS revenue_per_customer
+  FROM users u
+  JOIN order_items oi ON oi.user_id = u.id
+  GROUP BY age_band, u.gender
+  ORDER BY age_band, u.gender
+report: >
+  Spend per customer is remarkably even across age bands and genders; differences are within a few
+  percent, so targeting should be driven by category interest rather than demographics.
+tags: [customers, demographics, age, gender, segments]

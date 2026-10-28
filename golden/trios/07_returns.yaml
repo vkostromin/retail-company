@@ -1,0 +1,19 @@
+id: return_rates
+question: Which categories have the highest return rates and how much revenue do returns cost us?
+interpretation: >
+  Return rate = returned items / all items that were not cancelled. Returned revenue = sale_price of
+  returned items. Rank by returned revenue (business impact) and show the rate.
+sql: |
+  SELECT p.category,
+         COUNTIF(oi.status = 'Returned') AS returned_items,
+         ROUND(COUNTIF(oi.status = 'Returned') / COUNTIF(oi.status != 'Cancelled'), 3) AS return_rate,
+         ROUND(SUM(IF(oi.status = 'Returned', oi.sale_price, 0))) AS returned_revenue
+  FROM order_items oi
+  JOIN products p ON p.id = oi.product_id
+  GROUP BY p.category
+  ORDER BY returned_revenue DESC
+  LIMIT 15
+report: >
+  Returns are concentrated in high-price apparel (outerwear, jeans). Action: improve size guidance and
+  product imagery for the top returned-revenue categories.
+tags: [returns, category, operations, revenue-loss]

@@ -47,3 +47,7 @@ addopts = "-m 'not live'"
 [tool.ruff]
 line-length = 110
 src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = ["E501", "SIM105", "B008"]

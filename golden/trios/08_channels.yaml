@@ -1,0 +1,25 @@
+id: channel_value
+question: Which acquisition channels bring the most valuable customers?
+interpretation: >
+  Channel = users.traffic_source (where the customer was acquired). Value = net revenue per
+  customer and share of repeat customers (2+ orders). Compare channel size vs customer value.
+sql: |
+  WITH per_user AS (
+    SELECT oi.user_id,
+           SUM(IF(oi.status NOT IN ('Cancelled','Returned'), oi.sale_price, 0)) AS spend,
+           COUNT(DISTINCT oi.order_id) AS orders
+    FROM order_items oi
+    GROUP BY oi.user_id
+  )
+  SELECT u.traffic_source,
+         COUNT(*) AS customers,
+         ROUND(AVG(pu.spend), 2) AS revenue_per_customer,
+         ROUND(COUNTIF(pu.orders >= 2) / COUNT(*), 3) AS repeat_rate
+  FROM per_user pu
+  JOIN users u ON u.id = pu.user_id
+  GROUP BY u.traffic_source
+  ORDER BY revenue_per_customer DESC
+report: >
+  Search brings the most customers; value per customer is similar across channels, so budget should
+  follow acquisition cost. Repeat rate is the differentiator to watch.
+tags: [marketing, channel, traffic_source, acquisition, customers, ltv]

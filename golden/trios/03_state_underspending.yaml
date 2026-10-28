@@ -1,0 +1,30 @@
+id: state_underspending
+question: Why are users in state X underspending, and how does that compare to state Y?
+interpretation: >
+  "Underspending" = lower revenue per customer. Decompose revenue per customer into
+  orders per customer x items per order x average item price, and compare category mix and
+  return rate. The driver is whichever factor differs most between the two states.
+  Use the exact stored state names (e.g. 'California', 'Texas').
+sql: |
+  WITH base AS (
+    SELECT u.state, oi.user_id, oi.order_id, oi.sale_price, oi.status, p.category
+    FROM order_items oi
+    JOIN users u ON u.id = oi.user_id
+    JOIN products p ON p.id = oi.product_id
+    WHERE u.state IN ('California', 'Texas')
+  )
+  SELECT state,
+         COUNT(DISTINCT user_id) AS customers,
+         ROUND(SUM(IF(status NOT IN ('Cancelled','Returned'), sale_price, 0)) / COUNT(DISTINCT user_id), 2) AS revenue_per_customer,
+         ROUND(COUNT(DISTINCT order_id) / COUNT(DISTINCT user_id), 2) AS orders_per_customer,
+         ROUND(COUNT(*) / COUNT(DISTINCT order_id), 2) AS items_per_order,
+         ROUND(AVG(sale_price), 2) AS avg_item_price,
+         ROUND(COUNTIF(status = 'Returned') / COUNT(*), 3) AS return_rate
+  FROM base
+  GROUP BY state
+  ORDER BY revenue_per_customer DESC
+report: >
+  Revenue per customer differs mainly through purchase frequency, not basket size. A follow-up
+  category-mix query shows the lower-spending state buys more low-price categories (socks,
+  accessories). Actions: frequency campaigns (replenishment emails) and cross-sell into premium categories.
+tags: [geography, state, comparison, spend, why, drivers]

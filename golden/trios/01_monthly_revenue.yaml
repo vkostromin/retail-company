@@ -1,0 +1,22 @@
+id: monthly_revenue
+question: What is our monthly revenue trend over the last 12 months?
+interpretation: >
+  Revenue = SUM(order_items.sale_price) excluding Cancelled and Returned items (net of returns).
+  Monthly grain on the item's created_at. Also show orders and AOV so a revenue change can be
+  decomposed into volume (orders) vs basket size (AOV). Exclude the current, incomplete month
+  or flag it as month-to-date.
+sql: |
+  SELECT DATE_TRUNC(DATE(oi.created_at), MONTH) AS month,
+         ROUND(SUM(oi.sale_price)) AS revenue,
+         COUNT(DISTINCT oi.order_id) AS orders,
+         ROUND(SUM(oi.sale_price) / COUNT(DISTINCT oi.order_id), 2) AS aov
+  FROM order_items oi
+  WHERE oi.status NOT IN ('Cancelled', 'Returned')
+    AND oi.created_at >= TIMESTAMP(DATE_SUB(DATE_TRUNC(CURRENT_DATE(), MONTH), INTERVAL 12 MONTH))
+  GROUP BY month
+  ORDER BY month
+report: >
+  Revenue grew steadily month over month; growth came mainly from order volume while AOV stayed
+  roughly flat, so acquisition is the main lever. The current month is partial (month-to-date) and
+  should not be compared directly with complete months.
+tags: [revenue, trend, time-series, monthly, aov]

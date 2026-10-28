@@ -1,0 +1,25 @@
+id: top_customers
+question: Who are our top 10 customers by total spend?
+interpretation: >
+  Rank customers by net spend (non-cancelled, non-returned items). Identify customers only by their
+  pseudonymous user id plus non-identifying attributes (country, age band, acquisition channel).
+  Never list names, emails or addresses. Include order count and first/last purchase dates to show
+  loyalty vs one big basket.
+sql: |
+  SELECT oi.user_id,
+         u.country,
+         u.traffic_source,
+         COUNT(DISTINCT oi.order_id) AS orders,
+         ROUND(SUM(oi.sale_price), 2) AS total_spend,
+         DATE(MIN(oi.created_at)) AS first_purchase,
+         DATE(MAX(oi.created_at)) AS last_purchase
+  FROM order_items oi
+  JOIN users u ON u.id = oi.user_id
+  WHERE oi.status NOT IN ('Cancelled', 'Returned')
+  GROUP BY oi.user_id, u.country, u.traffic_source
+  ORDER BY total_spend DESC
+  LIMIT 10
+report: >
+  The top 10 customers are repeat buyers (several orders each) rather than single large baskets;
+  most come from Search and Organic channels. Recommend a VIP retention programme for this segment.
+tags: [customers, top, spend, ranking, ltv]

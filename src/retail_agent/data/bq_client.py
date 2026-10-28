@@ -1,8 +1,9 @@
 import logging
 import re
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Any, Sequence
+from typing import Any
 
 import pandas as pd
 from google.cloud import bigquery
@@ -37,12 +38,12 @@ class BigQueryRunner:
 
     def __init__(
         self,
-        project_id: Optional[str] = None,
-        dataset_id: Optional[str] = "bigquery-public-data.thelook_ecommerce",
+        project_id: str | None = None,
+        dataset_id: str | None = "bigquery-public-data.thelook_ecommerce",
         location: str = "US",
-        max_bytes_billed: Optional[int] = None,
+        max_bytes_billed: int | None = None,
         timeout_s: int = 60,
-        faults: Optional[FaultInjector] = None,
+        faults: FaultInjector | None = None,
     ) -> None:
         """Initialize BigQuery client.
 
@@ -60,7 +61,7 @@ class BigQueryRunner:
             self.breaker = CircuitBreaker("bigquery")
             logging.info(f"BigQuery client initialized for dataset: {self.dataset_id}")
         except Exception as e:
-            logging.error(f"Failed to initialize BigQuery client: {str(e)}")
+            logging.error(f"Failed to initialize BigQuery client: {e!s}")
             raise
 
     def execute_query(self, sql_query: str) -> pd.DataFrame:
@@ -95,8 +96,8 @@ class BigQueryRunner:
         self,
         sql_query: str,
         params: Sequence[bigquery.ScalarQueryParameter] = (),
-        max_rows: Optional[int] = None,
-        labels: Optional[Dict[str, str]] = None,
+        max_rows: int | None = None,
+        labels: dict[str, str] | None = None,
         on_retry=None,
     ) -> QueryResult:
         """Execute with cost cap, timeout, retries on transient errors and a circuit breaker."""
@@ -133,11 +134,11 @@ class BigQueryRunner:
             )
         except Exception as e:
             if is_transient(e):
-                logging.error(f"BigQuery execution failed: {str(e)}")
+                logging.error(f"BigQuery execution failed: {e!s}")
                 raise DependencyUnavailable("bigquery", str(e)) from e
             raise
 
-    def get_table_schema(self, table_name: str) -> List[Dict[str, Any]]:
+    def get_table_schema(self, table_name: str) -> list[dict[str, Any]]:
         """Get schema information for a specific table.
 
         Args:
@@ -160,5 +161,5 @@ class BigQueryRunner:
             logging.info(f"Retrieved schema for table {table_name}")
             return schema_info
         except Exception as e:
-            logging.error(f"Failed to get schema for table {table_name}: {str(e)}")
+            logging.error(f"Failed to get schema for table {table_name}: {e!s}")
             raise

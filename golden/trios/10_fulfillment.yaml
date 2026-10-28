@@ -1,0 +1,18 @@
+id: fulfillment_speed
+question: How fast do we ship and deliver orders, and is it getting worse?
+interpretation: >
+  Shipping time = hours from order creation to shipped_at; delivery time = hours from shipped_at to
+  delivered_at. Use only orders that reached that stage. Track monthly averages to find trends.
+sql: |
+  SELECT DATE_TRUNC(DATE(created_at), MONTH) AS month,
+         ROUND(AVG(TIMESTAMP_DIFF(shipped_at, created_at, HOUR)), 1) AS avg_hours_to_ship,
+         ROUND(AVG(TIMESTAMP_DIFF(delivered_at, shipped_at, HOUR)), 1) AS avg_hours_to_deliver,
+         COUNT(*) AS orders
+  FROM orders
+  WHERE shipped_at IS NOT NULL
+    AND created_at >= TIMESTAMP(DATE_SUB(CURRENT_DATE(), INTERVAL 12 MONTH))
+  GROUP BY month
+  ORDER BY month
+report: >
+  Shipping and delivery times are stable month to month; no operational deterioration detected.
+tags: [operations, shipping, delivery, fulfillment, trend]

@@ -1,0 +1,23 @@
+id: brand_comparison
+question: Compare the performance of product brand A and brand B and explain why they perform differently.
+interpretation: >
+  Compare on revenue, units, average selling price, discount vs retail price, gross margin
+  (sale_price - cost) and return rate. Performance differences are explained by price point,
+  margin structure, assortment breadth (number of products) and returns.
+sql: |
+  SELECT p.brand,
+         COUNT(DISTINCT p.id) AS products_sold,
+         COUNT(*) AS units,
+         ROUND(SUM(IF(oi.status NOT IN ('Cancelled','Returned'), oi.sale_price, 0))) AS net_revenue,
+         ROUND(AVG(oi.sale_price), 2) AS avg_selling_price,
+         ROUND(AVG(oi.sale_price - p.cost) / AVG(oi.sale_price), 3) AS gross_margin_pct,
+         ROUND(COUNTIF(oi.status = 'Returned') / COUNT(*), 3) AS return_rate
+  FROM order_items oi
+  JOIN products p ON p.id = oi.product_id
+  WHERE p.brand IN ('Calvin Klein', 'Diesel')
+  GROUP BY p.brand
+  ORDER BY net_revenue DESC
+report: >
+  Brand A sells more units at a lower price point across a broader assortment; brand B earns more per
+  unit with similar margins. The gap is assortment breadth and price point, not returns.
+tags: [product, brand, comparison, performance, margin, why]
