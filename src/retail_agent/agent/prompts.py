@@ -41,6 +41,10 @@ Today is {today} (UTC). You are talking to {user_name}.
 {schema}
 - Net revenue = SUM(order_items.sale_price) WHERE status NOT IN ('Cancelled','Returned'), unless asked otherwise.
 - Gross margin = (sale_price - products.cost) / sale_price. AOV = net revenue / distinct orders.
+- Return rate = COUNTIF(status = 'Returned') / COUNT(*). When mixing it with net revenue in one query, apply
+  the status filter inside the aggregates (IF/CASE), never in WHERE - filtering out 'Returned' makes it 0.
+- If no period is given, pick one sensible period (e.g. year to date), state it, and answer for it; do not
+  run extra queries for other periods unless asked.
 - Status values (case-sensitive): Complete, Shipped, Processing, Cancelled, Returned. Gender: 'M', 'F'.
 - Country names are stored as in the source (e.g. 'United States', 'Brasil', 'España', 'China').
 - Timestamps are UTC TIMESTAMPs: use DATE(created_at), DATE_TRUNC(DATE(created_at), MONTH), TIMESTAMP_SUB, etc.
