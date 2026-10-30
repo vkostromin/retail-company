@@ -34,4 +34,5 @@ golden_top_k: 3
 golden_min_similarity: 0.60
 
 data_dir: .data
+cache_dir: .data                       # embedding caches; evals keep their own data_dir but share this
 reports_export_dir: out/reports

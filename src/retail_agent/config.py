@@ -43,6 +43,7 @@ class Settings(BaseModel):
     golden_min_similarity: float = 0.60
 
     data_dir: Path = Path(".data")
+    cache_dir: Path = Path(".data")  # content-addressed caches, safe to share across data dirs (e.g. evals)
     reports_export_dir: Path = Path("out/reports")
 
     # Not in YAML: derived from the environment.
@@ -112,7 +113,7 @@ def load_settings(settings_file: Path | None = None) -> Settings:
         f.strip() for f in os.environ.get("RA_FAKE_FAIL", "").split(",") if f.strip()
     )
     settings = Settings(**raw)
-    for attr in ("data_dir", "reports_export_dir"):
+    for attr in ("data_dir", "cache_dir", "reports_export_dir"):
         p = getattr(settings, attr)
         if not p.is_absolute():
             setattr(settings, attr, PROJECT_ROOT / p)

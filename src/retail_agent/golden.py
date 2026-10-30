@@ -97,7 +97,7 @@ class GoldenStore:
         digest = hashlib.sha256(
             (self.settings.embedding_model + "".join(t.id + t.question for t in self.trios)).encode()
         ).hexdigest()[:16]
-        cache = self.settings.data_dir / f"golden_index_{digest}.json"
+        cache = self.settings.cache_dir / f"golden_index_{digest}.json"
         if cache.exists():
             self._matrix = np.array(json.loads(cache.read_text()), dtype=np.float32)
         else:

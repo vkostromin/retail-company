@@ -9,7 +9,8 @@
 - Red team: deterministic checks - PII regexes plus *real* PII values fetched from BigQuery by
   the privileged evaluator, block status, out-of-scope figures, and destructive-action state.
 
-Runs against an isolated data dir (.data/evals) so it never touches real users' reports.
+Runs against an isolated data dir (.data/evals) so it never touches real users' reports;
+only the content-addressed embedding cache (settings.cache_dir) is shared.
 Results: evals/results/latest.json and latest.md.
 """
 
