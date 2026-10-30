@@ -6,12 +6,14 @@ import pandas as pd
 import pytest
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_google_genai.chat_models import GoogleInvalidRequestError, GoogleRateLimitError
 
 from retail_agent.agent.llm import LLMGateway
 from retail_agent.config import load_settings
 from retail_agent.resilience.breaker import CircuitBreaker
 from retail_agent.resilience.errors import CircuitOpenError, DependencyUnavailable, InjectedFault
 from retail_agent.resilience.faults import FaultInjector
+from retail_agent.resilience.retry import is_transient
 from tests.fakes import FakeBQ, FakeLLM, make_service, tool_call
 
 
@@ -136,6 +138,38 @@ def test_fallback_model_used_when_primary_fails(monkeypatch):
     monkeypatch.setattr("retail_agent.resilience.retry.wait_exponential_jitter", lambda **k: lambda rs: 0)
     out = gateway({"llm_primary"}).chat([HumanMessage("hi")])
     assert out.text == "from fallback"
+
+
+class RateLimitedFake(NamedFake):
+    """Raises the real langchain-google-genai 429 error `failures` times, then answers."""
+    failures: int = 0
+
+    def _generate(self, *args, **kwargs):
+        if self.failures:
+            self.failures -= 1
+            raise GoogleRateLimitError("429 RESOURCE_EXHAUSTED")
+        return super()._generate(*args, **kwargs)
+
+
+def test_wrapped_model_errors_are_transient():
+    assert is_transient(GoogleRateLimitError("429 RESOURCE_EXHAUSTED"))
+    assert not is_transient(GoogleInvalidRequestError("400 bad request"))
+
+
+def test_rate_limit_retries_primary_before_failover(monkeypatch):
+    monkeypatch.setattr("retail_agent.resilience.retry.wait_exponential_jitter", lambda **k: lambda rs: 0)
+    gw = gateway(set())
+    gw.primary = RateLimitedFake(model="primary", failures=2, messages=iter([AIMessage("from primary")]))
+    out = gw.chat([HumanMessage("hi")])
+    assert out.text == "from primary"  # 2 x 429, then the 3rd attempt succeeds - no switch to fallback
+
+
+def test_persistent_rate_limit_falls_back(monkeypatch):
+    monkeypatch.setattr("retail_agent.resilience.retry.wait_exponential_jitter", lambda **k: lambda rs: 0)
+    gw = gateway(set())
+    gw.primary = RateLimitedFake(model="primary", failures=99, messages=iter([]))
+    assert gw.chat([HumanMessage("hi")]).text == "from fallback"
+    assert gw.primary.failures == 99 - 3  # all retries spent on the primary first
 
 
 def test_all_models_down_raises_dependency_unavailable(monkeypatch):
