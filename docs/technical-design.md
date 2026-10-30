@@ -30,10 +30,10 @@ Five principles drive every decision below:
 |---|---|---|---|
 | Cloud | **Google Cloud** | Your GCP project | The data already lives in BigQuery, and Gemini, IAM, DLP and Model Armor are native. A single cloud keeps data residency, VPC Service Controls and IAM consistent. |
 | Agent framework | **LangGraph** | LangGraph 1.2 | An explicit state machine rather than a free-running agent loop. It provides **`interrupt()` + checkpointer** for human-in-the-loop confirmation that survives restarts and can be resumed on another instance. Deterministic nodes (guards, confirmation, execution) sit next to LLM nodes, and the graph is easy to test with fakes. It is model-agnostic and has first-class Langfuse/LangSmith/OTel integration. |
-| LLM: agent loop | **Gemini Flash** (`gemini-3.5-flash`) | same | Strong tool calling and SQL ability, low latency and cost. Most turns are 10–25k tokens, about $0.005–0.015 each. |
-| LLM: fallback | **Gemini 2.5 Flash** | same | A *different generation*, so it has independent capacity and failure modes. Verified live that a conversation started on 3.5 continues on 2.5. |
+| LLM: agent loop | **Gemini 3.8 Flash** (`gemini-3.8-flash`) | same | Strong tool calling and SQL ability, low latency and cost. Most turns are 10–25k tokens, about $0.005–0.015 each. |
+| LLM: fallback | **Gemini 2.5 Flash** | same | A *different generation*, so it has independent capacity and failure modes. Verified live that a conversation started on Gemini 3.x continues on 2.5. |
 | LLM: guard | **Gemini Flash-Lite** (`gemini-3.5-flash-lite`) | same | About 0.5–1 s and less than $0.0001 per classification. Multilingual. |
-| LLM: judge / long reports | **Gemini Pro** (`gemini-3.1-pro-preview`) | judge only | A stronger model than the one under test, for evaluation. |
+| LLM: judge | **Gemini 3.1 Pro** (`gemini-3.1-pro-preview`) | same | Stronger than the model under test. The judge checks factual agreement with a reference result set and returns a strict JSON rubric; 3.1 Pro has the best factual accuracy and the most stable structured output for that, and is cheaper and far faster than Gemini 4 Argon. Argon is the better choice only for judging long multi-step agent trajectories or very long contexts. |
 | Embeddings | **Gemini embeddings** (`gemini-embedding-001`, 768-d) | same | Same vendor, same auth path, multilingual. |
 | Vector index | **Vertex AI Vector Search** (or **pgvector** at < 100k trios) | in-memory numpy plus BM25 fallback | The trio count is small; pgvector avoids another service. Vector Search is used when the bucket grows or latency matters. |
 | Warehouse | **BigQuery** via **authorized views + row-level access policies + policy tags / dynamic masking** | `sql_guard` scope rewrite (same contract, in code) | Enforcement happens in the database: even a bug in the agent cannot read PII or another user's products. |
@@ -232,7 +232,7 @@ Measured: typical analytical turns use 10–25k tokens (about $0.005–0.015). A
 ### Requirement 6: Quality assurance
 
 See [evaluation.md](evaluation.md). In summary:
-- **Offline (pre-deployment):** an **accuracy suite** compares agent answers with *reference SQL result sets*, scored by a stronger LLM judge (Gemini Pro). The **red-team suite** uses deterministic checks against *real* PII values, scope figures and destructive-action state, and is a 100% gate. Unit and flow tests use fakes.
+- **Offline (pre-deployment):** an **accuracy suite** compares agent answers with *reference SQL result sets*, scored by a stronger LLM judge (Gemini 3.1 Pro). The **red-team suite** uses deterministic checks against *real* PII values, scope figures and destructive-action state, and is a 100% gate. Unit and flow tests use fakes.
 - **Intent verification:** a judge rubric (answers intent, numbers match reference, clarity, explains why), plus online sampling of production traces and 👍/👎.
 - **UX:** task success, turns-to-answer, latency p95, confirmation friction (cancel rate), abandonment, and moderated sessions with executives.
 - **Current results:** analysis 10/10, red team 14/14 (see [`evals/results/latest.md`](../evals/results/latest.md)).

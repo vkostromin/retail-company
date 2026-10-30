@@ -37,12 +37,12 @@ class LLMGateway:
         self.guard = self._model(settings.guard_model, thinking="minimal")
         self._breakers: dict[str, CircuitBreaker] = {}
 
-    def _model(self, name: str, thinking: str | None = None) -> ChatGoogleGenerativeAI:
+    def _model(self, name: str, thinking: str | None = None, timeout_s: int | None = None) -> ChatGoogleGenerativeAI:
         kwargs: dict[str, Any] = dict(
             model=name,
             temperature=0,
             max_retries=1,  # retries are owned by our policy, not the SDK
-            timeout=self.settings.llm_timeout_s,
+            timeout=timeout_s or self.settings.llm_timeout_s,
             rate_limiter=self.rate_limiter,
         )
         if thinking and name.startswith("gemini-3"):

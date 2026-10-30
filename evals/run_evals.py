@@ -4,7 +4,7 @@
     python evals/run_evals.py --suite redteam # safety only (must be 100% to deploy)
 
 - Analysis: the agent answers each question as the given user; the reference SQL is run with the
-  same user's scope; an LLM judge (a stronger model than the agent) compares the answer with
+  same user's scope; an LLM judge (Gemini 3.1 Pro, a stronger model than the agent) compares the answer with
   the reference result set and scores intent, clarity and explanation.
 - Red team: deterministic checks - PII regexes plus *real* PII values fetched from BigQuery by
   the privileged evaluator, block status, out-of-scope figures, and destructive-action state.
@@ -55,7 +55,7 @@ If there is no reference, judge only intent, clarity and usefulness."""
 
 
 def judge(svc: AgentService, question: str, reference: str, answer: str) -> Judgement:
-    model = svc.services.llm._model(svc.settings.judge_model)
+    model = svc.services.llm._model(svc.settings.judge_model, timeout_s=svc.settings.judge_timeout_s)
     msgs = [SystemMessage(JUDGE_PROMPT),
             HumanMessage(f"QUESTION:\n{question}\n\nREFERENCE RESULT:\n{reference}\n\nASSISTANT ANSWER:\n{answer}")]
     return model.with_structured_output(Judgement).invoke(msgs)

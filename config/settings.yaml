@@ -6,13 +6,14 @@ bq_dataset: bigquery-public-data.thelook_ecommerce
 bq_location: US
 
 # --- Models -----------------------------------------------------------------
-agent_model: gemini-3.5-flash          # tool-calling analyst loop
+agent_model: gemini-3.8-flash          # tool-calling analyst loop
 fallback_model: gemini-2.5-flash       # different generation => independent failure modes
 guard_model: gemini-3.5-flash-lite     # cheap, fast input classifier
-judge_model: gemini-3.1-pro-preview    # offline evals only
+judge_model: gemini-3.1-pro-preview    # offline evals only: best factual accuracy + stable strict JSON
 embedding_model: gemini-embedding-001
 vertex_location: global
 llm_timeout_s: 90
+judge_timeout_s: 180                   # judges reason longer than the agent loop
 llm_requests_per_minute: 60            # client-side limiter, keep under your quota
 
 # --- Cost & safety limits ---------------------------------------------------

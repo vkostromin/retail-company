@@ -18,13 +18,14 @@ class Settings(BaseModel):
     bq_dataset: str = "bigquery-public-data.thelook_ecommerce"
     bq_location: str = "US"
 
-    agent_model: str = "gemini-3.5-flash"
+    agent_model: str = "gemini-3.8-flash"
     fallback_model: str | None = "gemini-2.5-flash"
     guard_model: str = "gemini-3.5-flash-lite"
     judge_model: str = "gemini-3.1-pro-preview"
     embedding_model: str = "gemini-embedding-001"
     vertex_location: str = "global"
     llm_timeout_s: int = 90
+    judge_timeout_s: int = 180
     llm_requests_per_minute: int = 60
 
     max_bytes_billed: int = 1_000_000_000

@@ -37,7 +37,7 @@ flowchart LR
 
     subgraph AI["Vertex AI"]
         ARM["Model Armor<br/>(injection / jailbreak / PII scan)"]
-        GEM["Gemini Flash (agent)<br/>Flash-Lite (guard) · Pro (reports, judge)"]
+        GEM["Gemini 3.8 Flash (agent) · 2.5 Flash (fallback)<br/>Flash-Lite (guard) · Gemini 3.1 Pro (judge)"]
         EMB["Gemini embeddings"]
         VS["Vector Search<br/>(golden trios index)"]
     end

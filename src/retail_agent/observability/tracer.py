@@ -27,12 +27,14 @@ MODEL_PRICES = {
     "flash-lite": (0.10, 0.40),
     "flash": (0.30, 2.50),
     "pro": (1.25, 10.00),
+    "argon": (1.25, 10.00),  # placeholder: set to your contract price
 }
 
 
 def estimate_cost(model: str, tokens_in: int, tokens_out: int) -> float:
     model = (model or "").lower()
-    key = "flash-lite" if "lite" in model else "pro" if "pro" in model else "flash"
+    key = ("flash-lite" if "lite" in model else "argon" if "argon" in model
+           else "pro" if "pro" in model else "flash")
     pin, pout = MODEL_PRICES[key]
     return (tokens_in * pin + tokens_out * pout) / 1_000_000
 

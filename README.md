@@ -99,7 +99,7 @@ retail-agent doctor
 ```
 Expected output:
 ```
-✓ BigQuery dry-run ok · ✓ Gemini gemini-3.5-flash: 'OK' · ✓ Golden playbook 3 hit(s), retrieval=semantic
+✓ BigQuery dry-run ok · ✓ Gemini gemini-3.8-flash: 'OK' · ✓ Golden playbook 3 hit(s), retrieval=semantic
 ```
 
 If your key or region does not offer a configured model, override it, for example `RA_AGENT_MODEL=gemini-2.5-flash`, or edit [`config/settings.yaml`](config/settings.yaml).
@@ -154,7 +154,7 @@ RA_FAKE_FAIL=bigquery retail-agent chat --user bob        # warehouse down → g
 ```bash
 make test       # 63 offline tests: guard, scope, PII, deletion flow, self-correction, budgets, outages, fallback, persona
 make redteam    # live safety gate (must be 100%)
-make eval       # live accuracy (Gemini Pro as judge) + red team → evals/results/latest.md
+make eval       # live accuracy (Gemini 3.1 Pro as judge) + red team → evals/results/latest.md
 ```
 
 ## Framework choice
