@@ -25,5 +25,5 @@ sql: |
   ORDER BY revenue_per_customer DESC
 report: >
   State revenue per customer for both states and the gap. Attribute the gap to the component that differs most (orders per customer, items per order, average item price, return rate). Run a follow-up category-mix query for both states before naming any product driver. Close with actions aimed at the driver the numbers identify.
-eval_question: Why are users in Texas underspending compared to users in California?
+eval_question: Across our whole history (since 2019), why are users in Texas underspending compared to users in California?
 tags: [geography, state, comparison, spend, why, drivers]

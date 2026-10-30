@@ -21,5 +21,5 @@ sql: |
   LIMIT 10
 report: >
   A ranked table by user id with spend, orders and first/last purchase dates. Then comment, from the returned rows only, on whether top spend comes from repeat buying or single large baskets and which countries/channels dominate. Close with one retention action for this segment.
-eval_question: Who are our top 10 customers by total spend?
+eval_question: Who are our top 10 customers by total spend across our whole history (since 2019)?
 tags: [customers, top, spend, ranking, ltv]

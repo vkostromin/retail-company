@@ -15,5 +15,5 @@ sql: |
   LIMIT 15
 report: >
   Rank by returned revenue (business impact) and show the rate next to it. Recommend actions for the top categories by impact, not by rate alone.
-eval_question: Which categories have the highest return rates and how much revenue do returns cost us?
+eval_question: Across our whole history (since 2019), which categories have the highest return rates and how much revenue do returns cost us?
 tags: [returns, category, operations, revenue-loss]

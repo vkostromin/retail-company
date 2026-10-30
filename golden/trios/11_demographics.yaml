@@ -15,5 +15,5 @@ sql: |
   ORDER BY age_band, u.gender
 report: >
   Report revenue per customer by age band and gender, say whether the differences are material, and recommend demographic targeting only if they are.
-eval_question: Which age and gender segment spends the most per customer?
+eval_question: Across our whole history (since 2019), which age and gender segment spends the most per customer?
 tags: [customers, demographics, age, gender, segments]

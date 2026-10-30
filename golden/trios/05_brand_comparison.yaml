@@ -19,5 +19,5 @@ sql: |
   ORDER BY net_revenue DESC
 report: >
   Compare the brands on every metric in one table. Explain the gap through the differences actually found (price point, units, assortment breadth, margin, returns), largest driver first.
-eval_question: Compare Calvin Klein and Diesel. Why do they perform differently?
+eval_question: Compare Calvin Klein and Diesel across our whole history (since 2019). Why do they perform differently?
 tags: [product, brand, comparison, performance, margin, why]

@@ -21,5 +21,5 @@ sql: |
   ORDER BY revenue_per_customer DESC
 report: >
   Compare channel size with revenue per customer and repeat rate. Budget advice depends on value relative to acquisition cost, which is not in this dataset - say so instead of assuming it.
-eval_question: Which acquisition channels bring the most valuable customers?
+eval_question: Across our whole history (since 2019), which acquisition channels bring the most valuable customers?
 tags: [marketing, channel, traffic_source, acquisition, customers, ltv]

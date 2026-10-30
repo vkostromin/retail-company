@@ -20,6 +20,7 @@ sql: |
   ), active AS (
     SELECT DATE_TRUNC(DATE(created_at), MONTH) AS month, COUNT(DISTINCT user_id) AS active_customers
     FROM orders
+    WHERE status != 'Cancelled'
     GROUP BY month
   )
   SELECT c.month, c.churned_customers, a.active_customers,

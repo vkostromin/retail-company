@@ -27,6 +27,7 @@ from pydantic import ValidationError
 
 from ..observability.tracer import TurnContext, safe_preview
 from ..resilience.errors import DependencyUnavailable
+from ..safety.grounding import ungrounded_numbers
 from ..safety.input_guard import REFUSAL_EN, GuardVerdict, build_classifier_messages, prefilter
 from ..safety.pii import redact_text
 from ..tools.base import ToolContext, ToolRegistry
@@ -159,11 +160,36 @@ def build_graph(services, registry: ToolRegistry, checkpointer=None):
                 response = services.llm.chat(messages, None, turn)
                 if not _text(response).strip() and not response.tool_calls:
                     response = AIMessage(EMPTY_RESPONSE_MESSAGE)
+            if not response.tool_calls and _text(response).strip():
+                response = ground_numbers(response, messages, state, turn)
         except DependencyUnavailable as e:
             turn.emit("dependency_down", dependency="llm", error=str(e)[:300])
             turn.flags.add("degraded")
             response = AIMessage(LLM_DOWN_MESSAGE)
         return {"messages": [response]}
+
+    def ground_numbers(response: AIMessage, messages: list[AnyMessage], state: AgentState,
+                       turn: TurnContext) -> AIMessage:
+        """Every figure in the final answer must come from (or derive from) a query result."""
+        evidence = [_text(m) for m in state["messages"] if isinstance(m, ToolMessage)]
+        allowed = [_text(m) for m in state["messages"] if isinstance(m, HumanMessage)]
+        missing = ungrounded_numbers(_text(response), evidence, allowed)
+        if not missing:
+            return response
+        turn.emit("grounding_check", ungrounded=missing[:20], action="revise")
+        turn.progress("Double-checking the numbers…")
+        nudge = HumanMessage(
+            "[system check] These figures in your answer do not appear in your query results and cannot be "
+            f"derived from them: {', '.join(missing[:15])}. Rewrite the full answer: remove each unsupported "
+            "figure or replace it with one from the results. Keep figures you derived by simple arithmetic "
+            "from the results. Do not mention this check."
+        )
+        revised = services.llm.chat([*messages, response, nudge], None, turn)
+        if not _text(revised).strip():
+            return response
+        remaining = ungrounded_numbers(_text(revised), evidence, allowed)
+        turn.emit("grounding_revised", remaining=remaining[:20])
+        return AIMessage(_text(revised))
 
     def after_agent(state: AgentState) -> str:
         last = state["messages"][-1]

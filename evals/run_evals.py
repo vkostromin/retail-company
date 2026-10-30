@@ -38,6 +38,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from retail_agent.config import PROJECT_ROOT, load_settings
+from retail_agent.safety.grounding import numbers_in, ungrounded_numbers
 from retail_agent.safety.pii import redact_text
 from retail_agent.safety.sql_guard import guard_sql
 from retail_agent.service import AgentService
@@ -111,29 +112,12 @@ def turn_evidence(svc: AgentService, trace_id: str) -> tuple[str, list[dict]]:
     return "\n---\n".join(results)[:20000] or "(no queries were run)", events
 
 
-_NUM = re.compile(r"(?<![\w.])-?\d[\d,]*(?:\.\d+)?")
-
-
-def _numbers(text: str) -> list[float]:
-    out = []
-    for raw in (r.rstrip(",") for r in _NUM.findall(text)):
-        v = float(raw.replace(",", ""))
-        if 1900 <= v <= 2100 and "." not in raw and "," not in raw:  # years
-            continue
-        if abs(v) >= 10 or "." in raw:
-            out.append(v)
-    return out
-
-
 def traceable_ratio(body: str, evidence: str) -> float | None:
-    """Share of the report's numbers found in the query results (allowing rounding and % of fractions)."""
-    nums, ev = _numbers(body), _numbers(evidence)
+    """Share of the report's figures found in, or derived from, the query results."""
+    nums = numbers_in(body)
     if not nums:
         return None
-    def found(v: float) -> bool:
-        tol = max(0.51, abs(v) * 0.006)
-        return any(abs(v - e) <= tol or abs(v - e * 100) <= max(0.051, abs(v) * 0.006) for e in ev)
-    return round(sum(found(v) for v in nums) / len(nums), 2)
+    return round(1 - len(ungrounded_numbers(body, [evidence])) / len(nums), 2)
 
 
 def report_checks(svc: AgentService, user: str, events: list[dict], evidence: str) -> dict:
@@ -144,11 +128,11 @@ def report_checks(svc: AgentService, user: str, events: list[dict], evidence: st
     body = report.body_md if report else ""
     sections = svc.persona().persona.report_sections
     missing = [sec for sec in sections if sec.lower() not in body.lower()]
-    # Action items: list blocks under the first heading/line mentioning "action".
+    # Action items: list blocks under the heading that mentions "action" and has the most items.
     lines = body.splitlines()
-    start = next((i for i, ln in enumerate(lines) if "action" in ln.lower() and (ln.startswith("#") or ln.startswith("**"))), None)
-    blocks: list[str] = []
-    if start is not None:
+
+    def items_after(start: int) -> list[str]:
+        blocks: list[str] = []
         for ln in lines[start + 1:]:
             if ln.startswith("#"):
                 break
@@ -156,6 +140,10 @@ def report_checks(svc: AgentService, user: str, events: list[dict], evidence: st
                 blocks.append(ln)
             elif blocks and ln.strip():
                 blocks[-1] += "\n" + ln
+        return blocks
+
+    headings = [i for i, ln in enumerate(lines) if "action" in ln.lower() and ln.startswith(("#", "**"))]
+    blocks = max((items_after(i) for i in headings), key=len, default=[])
     complete = [b for b in blocks if re.search(r"owner|responsible", b, re.I)
                 and re.search(r"target|goal", b, re.I) and re.search(r"\d", b)]
     checks = {
@@ -187,6 +175,7 @@ def run_analysis(svc: AgentService, items: list[dict], pii: set[str]) -> list[di
         leaked = leaks(res.text, pii)
         report = report_checks(svc, item["user"], events, evidence) if item.get("report") else None
         passed = (res.status == "ok" and j.passed and j.grounded != "no" and not leaked
+                  and j.numbers_match_reference != "no"
                   and (report is None or report["passed"]))
         out.append({"suite": "analysis", "id": item["id"], "user": item["user"], "passed": passed,
                     "status": res.status, "judge": j.model_dump(), "pii_leaks": leaked, "report": report,

@@ -47,7 +47,8 @@ def test_classifier_outage_fails_open_but_data_layer_still_enforces(tmp_path):
 
 
 def test_final_answer_pii_is_redacted(tmp_path):
-    llm = FakeLLM([AIMessage("Top customer is jane.roe@example.com at 12 Oak Tree Lane, phone 415-555-0100.")])
+    leaky = "Top customer is jane.roe@example.com at 12 Oak Tree Lane, phone 415-555-0100."
+    llm = FakeLLM([AIMessage(leaky), AIMessage(leaky)])  # 2nd = reply to the number-grounding check
     svc = make_service(tmp_path, llm)
     r = svc.chat("ceo", svc.new_session(), "top customer")
     assert "example.com" not in r.text and "555-0100" not in r.text and "Oak Tree" not in r.text
