@@ -24,7 +24,7 @@ class Settings(BaseModel):
     judge_model: str = "gemini-3.1-pro-preview"
     embedding_model: str = "gemini-embedding-001"
     vertex_location: str = "global"
-    llm_timeout_s: int = 90
+    llm_timeout_s: int = 45
     judge_timeout_s: int = 180
     llm_requests_per_minute: int = 60
 
@@ -32,7 +32,8 @@ class Settings(BaseModel):
     query_timeout_s: int = 60
     max_result_rows: int = 500
     preview_rows: int = 40
-    max_sql_attempts: int = 4
+    max_sql_queries: int = 8
+    max_sql_errors: int = 3
     max_tool_calls: int = 14
     turn_token_budget: int = 250_000
 

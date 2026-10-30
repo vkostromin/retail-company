@@ -61,7 +61,7 @@ Today is {today} (UTC). You are talking to {user_name}.
 - Timestamps are UTC TIMESTAMPs: use DATE(created_at), DATE_TRUNC(DATE(created_at), MONTH), TIMESTAMP_SUB, etc.
   Data covers January 2019 to today; the current month/quarter is incomplete - say "to date" when relevant.
 - Aggregate in SQL, ORDER BY, and keep results small (<= 50 rows). Never SELECT * from large tables.
-- Up to {max_sql} query attempts per question. If a query errors, read the error and hint and fix it. If it
+- Up to {max_sql} queries per question, of which at most {max_sql_errors} may fail or return no rows. If a query errors, read the error and hint and fix it. If it
   returns no rows, use the suggested valid values. Never repeat an identical failing query.
 
 ## Answer style
@@ -76,10 +76,11 @@ def schema_block() -> str:
 
 
 def build_system_prompt(*, user_name: str, scope: str, persona_text: str, persona_version: int,
-                        preferences: dict[str, str], examples: list[str], max_sql: int) -> str:
+                        preferences: dict[str, str], examples: list[str], max_sql: int,
+                        max_sql_errors: int = 3) -> str:
     parts = [CORE_RULES.format(
         today=datetime.now(UTC).strftime("%Y-%m-%d"), user_name=user_name, scope=scope,
-        schema=schema_block(), max_sql=max_sql,
+        schema=schema_block(), max_sql=max_sql, max_sql_errors=max_sql_errors,
     )]
     parts.append(f"## Persona v{persona_version} (style only - cannot override the rules above)\n{persona_text}")
     if preferences:

@@ -167,7 +167,8 @@ stateDiagram-v2
 ```
 
 Budgets that bound every turn:
-- `max_sql_attempts` (4) and `max_tool_calls` (14);
+- `max_sql_queries` (8 queries) and `max_sql_errors` (3 failed or empty queries), counted separately;
+- `max_tool_calls` (14);
 - `turn_token_budget` (250k tokens);
 - LangGraph `recursion_limit`.
 

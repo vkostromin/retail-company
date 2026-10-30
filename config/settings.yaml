@@ -12,7 +12,7 @@ guard_model: gemini-3.5-flash-lite     # cheap, fast input classifier
 judge_model: gemini-3.1-pro-preview    # offline evals only: best factual accuracy + stable strict JSON
 embedding_model: gemini-embedding-001
 vertex_location: global
-llm_timeout_s: 90
+llm_timeout_s: 45                      # agent calls normally take 3-15 s; fail over fast on a stall
 judge_timeout_s: 180                   # judges reason longer than the agent loop
 llm_requests_per_minute: 60            # client-side limiter, keep under your quota
 
@@ -21,7 +21,8 @@ max_bytes_billed: 1000000000           # 1 GB hard cap per query (BigQuery rejec
 query_timeout_s: 60
 max_result_rows: 500                   # rows fetched from BigQuery
 preview_rows: 40                       # rows shown to the LLM
-max_sql_attempts: 4                    # per user turn, includes self-corrections
+max_sql_queries: 8                     # per user turn, all run_sql calls
+max_sql_errors: 3                      # per user turn, failed or empty queries (self-corrections)
 max_tool_calls: 14                     # per user turn
 turn_token_budget: 250000              # input+output tokens per user turn
 

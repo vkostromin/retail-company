@@ -108,21 +108,24 @@ def _diagnose_empty(ctx: ToolContext, sql: str) -> list[dict]:
 
 def run_sql(ctx: ToolContext, args: RunSQLArgs) -> dict:
     s = ctx.settings
-    if ctx.current("sql_attempts") >= s.max_sql_attempts:
-        ctx.turn.emit("sql_budget_exhausted", attempts=ctx.current("sql_attempts"))
+    queries, errors = ctx.current("sql_queries"), ctx.current("sql_errors")
+    if queries >= s.max_sql_queries or errors >= s.max_sql_errors:
+        limit = "queries" if queries >= s.max_sql_queries else "failed attempts"
+        ctx.turn.emit("sql_budget_exhausted", queries=queries, errors=errors, limit=limit)
         return {
             "status": "budget_exhausted",
-            "error": "The query budget for this question is used up.",
+            "error": f"The query budget for this question is used up ({queries} queries, {errors} failed).",
             "hint": "Do not run more queries. Answer with what you have, or explain what could not be "
                     "computed and suggest how the user could rephrase.",
         }
-    attempt = ctx.bump("sql_attempts")
+    attempt = ctx.bump("sql_queries")
     ctx.turn.progress(f"Querying data: {args.purpose[:60]}")
     base = {"attempt": attempt, "purpose": args.purpose, "sql": args.sql}
 
     try:
         guarded = guard_sql(args.sql, ctx.principal, s.bq_dataset, s.max_result_rows)
     except SQLGuardError as e:
+        ctx.bump("sql_errors")
         ctx.turn.emit("sql_attempt", status="rejected", code=e.code, error=e.message, **base)
         if e.code in {"pii_column", "not_read_only", "forbidden_function", "unknown_table", "multiple_statements"}:
             ctx.turn.emit("guardrail_block", layer="sql_guard", category=e.code)
@@ -137,6 +140,7 @@ def run_sql(ctx: ToolContext, args: RunSQLArgs) -> dict:
         if result is None:
             est = ctx.services.bq.dry_run(guarded.sql, guarded.params)  # free: syntax + cost check
             if est > s.max_bytes_billed:
+                ctx.bump("sql_errors")
                 ctx.turn.emit("sql_attempt", status="too_expensive", bytes_estimate=est, **base)
                 return {"status": "rejected", "error": f"Query would scan {est / 1e9:.1f} GB (limit "
                         f"{s.max_bytes_billed / 1e9:.1f} GB).", "hint": "Filter by date or aggregate more."}
@@ -156,6 +160,7 @@ def run_sql(ctx: ToolContext, args: RunSQLArgs) -> dict:
                         "to try again in a few minutes."}
     except GoogleAPICallError as e:
         msg = _clean_bq_error(e, s.bq_dataset)
+        ctx.bump("sql_errors")
         ctx.turn.emit("sql_attempt", status="error", error=msg, **base)
         return {"status": "error", "error": msg,
                 "hint": "Fix the SQL and try again. Use only the documented columns; table names unqualified."}
@@ -172,6 +177,7 @@ def run_sql(ctx: ToolContext, args: RunSQLArgs) -> dict:
                   result_preview=json.dumps(_records(df.head(5)), ensure_ascii=False)[:1500], **base)
 
     if df.empty:
+        ctx.bump("sql_errors")  # an empty result usually means a wrong filter: it counts as a correction
         hints = _diagnose_empty(ctx, args.sql)
         ctx.turn.emit("empty_result", attempt=attempt, hints=hints)
         return {

@@ -48,7 +48,8 @@ class AgentState(TypedDict, total=False):
     session_id: str
     verdict: dict | None
     context: dict | None
-    sql_attempts: int
+    sql_queries: int  # all run_sql calls this turn
+    sql_errors: int  # failed / empty ones (self-corrections)
     tool_calls: int
     pending_action: dict | None
 
@@ -96,7 +97,7 @@ def build_graph(services, registry: ToolRegistry, checkpointer=None):
                 # Fail open: enforcement is in the data layer, keep the assistant available.
                 turn.emit("guard_degraded", error=str(e)[:200])
                 verdict = None
-        reset: dict[str, Any] = {"sql_attempts": 0, "tool_calls": 0, "pending_action": None,
+        reset: dict[str, Any] = {"sql_queries": 0, "sql_errors": 0, "tool_calls": 0, "pending_action": None,
                                  "verdict": verdict.model_dump() if verdict else None}
         turn.emit("guard_verdict", source=source, category=verdict.category if verdict else "unknown",
                   language=verdict.language if verdict else None, reason=verdict.reason if verdict else None,
@@ -140,7 +141,7 @@ def build_graph(services, registry: ToolRegistry, checkpointer=None):
             user_name=principal.display_name, scope=principal.scope.describe(),
             persona_text=ctx.get("persona_text", ""), persona_version=ctx.get("persona_version", 0),
             preferences=ctx.get("preferences", {}), examples=ctx.get("examples", []),
-            max_sql=settings.max_sql_attempts,
+            max_sql=settings.max_sql_queries, max_sql_errors=settings.max_sql_errors,
         )
         messages: list[AnyMessage] = [SystemMessage(system), *_window(state["messages"])]
         over_budget = (state.get("tool_calls", 0) >= settings.max_tool_calls

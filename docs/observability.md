@@ -21,6 +21,7 @@ Every user turn has a `trace_id`. Each event also carries `session_id` (the conv
 | `turn_messages` | every message of the turn: user text, assistant replies, tool calls with arguments, tool results (redacted, truncated) | What exactly was said between the user, the model and the tools? |
 | `confirmation_requested/shown/accepted/cancelled`, `deletion_executed`, `deletion_undone` | ids, counts, criteria | Who deleted what, when, and with what confirmation? |
 | `budget_exhausted` / `sql_budget_exhausted` | counters | Is the agent looping? |
+| `grounding_check` / `grounding_revised` | figures in the answer not found in (or derivable from) query results; what remained after the revision | Did the agent try to state numbers it never queried? |
 | `report_saved`, `preference_set`, `persona_published`, `feedback` | — | Product analytics and auditing |
 | `error` | error type, message, traceback | Root cause of crashes |
 

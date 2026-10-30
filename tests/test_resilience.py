@@ -57,9 +57,33 @@ def test_attempt_budget_stops_retry_loops(tmp_path):
     svc = make_service(tmp_path, llm)
     r = svc.chat("ceo", svc.new_session(), "something hard")
     statuses = [json.loads(m.content)["status"] for m in llm.calls[-1] if isinstance(m, ToolMessage)]
-    assert statuses.count("error") == svc.settings.max_sql_attempts
+    assert statuses.count("error") == svc.settings.max_sql_errors
     assert "budget_exhausted" in statuses
     assert r.status == "ok"
+
+
+def ok_query(i):
+    return tool_call("run_sql", sql=f"SELECT {i} AS step, COUNT(*) n FROM orders", purpose=f"step {i}")
+
+
+def test_error_after_several_good_queries_can_still_be_fixed(tmp_path):
+    """Regression: 3 good queries, then an error - the corrected query must still run."""
+    llm = FakeLLM([ok_query(1), ok_query(2), ok_query(3),
+                   tool_call("run_sql", sql="SELECT bad_col FROM orders", purpose="quarterly trend"),
+                   ok_query(4), AIMessage("done")])
+    svc = make_service(tmp_path, llm)
+    svc.chat("ceo", svc.new_session(), "what drove sales in 2025?")
+    statuses = [json.loads(m.content)["status"] for m in llm.calls[-1] if isinstance(m, ToolMessage)]
+    assert statuses == ["ok", "ok", "ok", "error", "ok"]
+
+
+def test_total_query_cap(tmp_path):
+    llm = FakeLLM([*(ok_query(i) for i in range(10)), AIMessage("done")])
+    svc = make_service(tmp_path, llm)
+    svc.chat("ceo", svc.new_session(), "everything")
+    statuses = [json.loads(m.content)["status"] for m in llm.calls[-1] if isinstance(m, ToolMessage)]
+    assert statuses.count("ok") == svc.settings.max_sql_queries
+    assert statuses[svc.settings.max_sql_queries:] == ["budget_exhausted"] * (10 - svc.settings.max_sql_queries)
 
 
 def test_tool_call_budget_forces_final_answer(tmp_path):
