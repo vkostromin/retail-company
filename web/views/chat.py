@@ -125,7 +125,7 @@ def render_panel(kind: str, arg: str) -> None:
                 messages = svc.transcript(uid, arg or sid)
                 head.markdown(f"**Transcript** of `{arg or sid}` · {len(messages)} messages (redacted)")
                 if messages:
-                    render_messages(messages)
+                    render_messages(messages, key=f"transcript-{arg or sid}")
                 else:
                     st.caption("No messages yet.")
             elif kind == "trace":

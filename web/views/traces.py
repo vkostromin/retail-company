@@ -57,6 +57,6 @@ if events:
     render_timeline(events)
     convo = next((e["messages"] for e in events if e["event"] == "turn_messages"), [])
     with st.expander(f"Conversation in this turn ({len(convo)} messages, redacted)", expanded=False):
-        render_messages(convo)
+        render_messages(convo, key=f"trace-{trace_id}")
     with st.expander("Raw events (JSON)"):
         st.json(events)
