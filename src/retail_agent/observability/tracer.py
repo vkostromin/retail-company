@@ -107,7 +107,8 @@ class TurnContext:
     trace_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     started: float = field(default_factory=time.monotonic)
     tokens_in: int = 0
-    tokens_out: int = 0
+    tokens_out: int = 0  # includes reasoning (thinking) tokens - billed as output
+    tokens_reasoning: int = 0
     llm_calls: int = 0
     cost_usd: float = 0.0
     sql_executed: list[str] = field(default_factory=list)
@@ -156,13 +157,16 @@ class TraceCallback(BaseCallbackHandler):
         except (AttributeError, IndexError):
             pass
         tin, tout = int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0))
+        # langchain-google-genai already folds thoughts into output_tokens; the detail shows how many.
+        reasoning = int((usage.get("output_token_details") or {}).get("reasoning", 0))
         cost = estimate_cost(model, tin, tout)
         self.turn.tokens_in += tin
         self.turn.tokens_out += tout
+        self.turn.tokens_reasoning += reasoning
         self.turn.llm_calls += 1
         self.turn.cost_usd += cost
         self.turn.emit(
-            "llm_call", model=model, input_tokens=tin, output_tokens=tout,
+            "llm_call", model=model, input_tokens=tin, output_tokens=tout, reasoning_tokens=reasoning,
             latency_ms=int((time.monotonic() - started) * 1000), finish_reason=finish,
             cost_usd=round(cost, 6),
         )

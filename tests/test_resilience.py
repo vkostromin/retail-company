@@ -185,3 +185,20 @@ def test_circuit_breaker_opens_and_fails_fast():
             cb.call(lambda: (_ for _ in ()).throw(InjectedFault("down")))
     with pytest.raises(CircuitOpenError):
         cb.call(lambda: "never called")
+
+
+# ---------------------------------------------------------------- tracing: thinking tokens
+def test_thinking_tokens_are_traced_and_billed_as_output(tmp_path):
+    from langchain_core.outputs import ChatGeneration, LLMResult
+
+    from retail_agent.observability.tracer import TraceCallback, Tracer, TurnContext, estimate_cost
+
+    turn = TurnContext(tracer=Tracer(tmp_path), session_id="s", user_id="u")
+    msg = AIMessage("answer", response_metadata={"model_name": "gemini-3.8-flash"}, usage_metadata={
+        "input_tokens": 1000, "output_tokens": 900, "total_tokens": 1900,
+        "output_token_details": {"reasoning": 800},  # SDK folds thoughts into output_tokens
+    })
+    TraceCallback(turn).on_llm_end(LLMResult(generations=[[ChatGeneration(message=msg)]]), run_id=None)
+    call = [e for e in Tracer(tmp_path).read_trace(turn.trace_id) if e["event"] == "llm_call"][0]
+    assert call["reasoning_tokens"] == 800 and turn.tokens_reasoning == 800
+    assert turn.cost_usd == pytest.approx(estimate_cost("gemini-3.8-flash", 1000, 900))

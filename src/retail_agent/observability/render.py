@@ -20,6 +20,7 @@ def summarize(e: dict) -> str:
         return f"persona v{e.get('persona_version')} | prefs {e.get('preferences')} | playbook[{e.get('golden_mode')}]: {golden}"
     if ev == "llm_call":
         return (f"{e.get('model')} in={e.get('input_tokens')} out={e.get('output_tokens')} "
+                f"(thinking={e.get('reasoning_tokens', 0)}) "
                 f"{e.get('latency_ms')}ms finish={e.get('finish_reason')} ${e.get('cost_usd')}")
     if ev == "tool_call":
         return f"{e.get('tool')} -> {e.get('status')} ({e.get('latency_ms')}ms)"

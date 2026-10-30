@@ -162,7 +162,8 @@ class AgentService:
 
     def _finish(self, turn: TurnContext, status: str, text: str, interrupt: dict | None = None) -> TurnResult:
         turn.emit("turn_end", status=status, latency_ms=turn.elapsed_ms, tokens=turn.tokens,
-                  tokens_in=turn.tokens_in, tokens_out=turn.tokens_out, llm_calls=turn.llm_calls,
+                  tokens_in=turn.tokens_in, tokens_out=turn.tokens_out,
+                  tokens_reasoning=turn.tokens_reasoning, llm_calls=turn.llm_calls,
                   cost_usd=round(turn.cost_usd, 6), sql_queries=len(turn.sql_executed), flags=sorted(turn.flags),
                   answer_preview=safe_preview(text, 400))
         return TurnResult(text=text, trace_id=turn.trace_id, status=status, interrupt=interrupt,
