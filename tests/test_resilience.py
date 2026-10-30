@@ -202,3 +202,17 @@ def test_thinking_tokens_are_traced_and_billed_as_output(tmp_path):
     call = [e for e in Tracer(tmp_path).read_trace(turn.trace_id) if e["event"] == "llm_call"][0]
     assert call["reasoning_tokens"] == 800 and turn.tokens_reasoning == 800
     assert turn.cost_usd == pytest.approx(estimate_cost("gemini-3.8-flash", 1000, 900))
+
+
+def test_interrupted_turn_closes_trace_and_repairs_history(tmp_path):
+    class Interrupt(BaseException):
+        pass
+
+    llm = FakeLLM([tool_call("describe_dataset"), Interrupt(), AIMessage("Recovered.")])
+    svc = make_service(tmp_path, llm)
+    sid = svc.new_session()
+    with pytest.raises(Interrupt):
+        svc.chat("ceo", sid, "first")
+    ends = [t for t in svc.services.tracer.turns() if t["session_id"] == sid]
+    assert ends and ends[-1]["status"] == "error"
+    assert svc.chat("ceo", sid, "second").text == "Recovered."

@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from ..resilience.errors import DependencyUnavailable
 from ..safety.pii import sanitize_dataframe
+from ..safety.privacy import protect_small_groups
 from ..safety.sql_guard import LOGICAL_TABLES, SQLGuardError, extract_string_filters, guard_sql
 from .base import ToolContext, ToolSpec
 
@@ -29,9 +30,10 @@ TABLE_NOTES = {
 }
 GLOSSARY = {
     "net revenue": "SUM(order_items.sale_price) where status NOT IN ('Cancelled','Returned')",
-    "AOV": "net revenue / number of distinct orders",
+    "AOV": "net revenue / distinct orders with at least one non-cancelled, non-returned item",
     "gross margin": "(sale_price - products.cost) / sale_price",
-    "return rate": "returned items / non-cancelled items",
+    "return rate": "COUNTIF(status='Returned') / COUNTIF(status != 'Cancelled') on order_items",
+    "churn": "no non-cancelled order for 90 days; counted in the month the 90 days elapse; churn rate = churned / customers ordering in that month",
     "status values": "Complete, Shipped, Processing, Cancelled, Returned",
     "coverage": "Orders from January 2019 to today, refreshed daily",
 }
@@ -126,6 +128,7 @@ def run_sql(ctx: ToolContext, args: RunSQLArgs) -> dict:
             ctx.turn.emit("guardrail_block", layer="sql_guard", category=e.code)
         return e.to_dict()
 
+    base["executed_sql"] = guarded.sql  # what BigQuery actually ran (scoped rewrite)
     cache_key = hashlib.sha256(
         (guarded.sql + json.dumps([(p.name, getattr(p, "values", None)) for p in guarded.params])).encode()
     ).hexdigest()
@@ -160,9 +163,13 @@ def run_sql(ctx: ToolContext, args: RunSQLArgs) -> dict:
     df, redactions = sanitize_dataframe(result.df)
     if redactions:
         ctx.turn.emit("pii_redaction", layer="query_result", counts=dict(redactions))
+    df, privacy = protect_small_groups(df)
+    if privacy:
+        ctx.turn.emit("privacy_suppression", **privacy)
     ctx.turn.sql_executed.append(args.sql)
     ctx.turn.emit("sql_attempt", status="ok", rows=len(df), bytes_processed=result.bytes_processed,
-                  cache_hit=result.cache_hit, duration_ms=result.duration_ms, **base)
+                  cache_hit=result.cache_hit, duration_ms=result.duration_ms,
+                  result_preview=json.dumps(_records(df.head(5)), ensure_ascii=False)[:1500], **base)
 
     if df.empty:
         hints = _diagnose_empty(ctx, args.sql)
@@ -175,6 +182,12 @@ def run_sql(ctx: ToolContext, args: RunSQLArgs) -> dict:
         }
     preview = df.head(s.preview_rows)
     out = {"status": "ok", "row_count": len(df), "columns": list(df.columns), "rows": _records(preview)}
+    if privacy.get("dropped_columns"):
+        out["privacy_note"] = (f"Removed {privacy['dropped_columns']} from customer-level rows: demographics are "
+                               "only available for groups of customers.")
+    if privacy.get("suppressed_groups"):
+        out["privacy_note"] = (f"{privacy['suppressed_groups']} group(s) with fewer than 5 customers were "
+                               "suppressed. Mention this; do not estimate them.")
     if len(df) > s.preview_rows:
         out["note"] = f"Showing the first {s.preview_rows} of {len(df)} rows; aggregate further if needed."
     return out
@@ -186,13 +199,13 @@ class PlaybookArgs(BaseModel):
 
 
 def search_playbook(ctx: ToolContext, args: PlaybookArgs) -> dict:
-    hits, mode = ctx.services.golden.search(args.question)
+    hits, mode = ctx.services.golden.search(args.question, exclude=ctx.turn.golden_exclude)
     ctx.turn.emit("golden_search", mode=mode, hits=[(t.id, round(s, 3)) for t, s in hits])
     if not hits:
         return {"examples": [], "note": "No sufficiently similar analyst examples."}
     return {"retrieval": mode, "examples": [
         {"id": t.id, "question": t.question, "interpretation": t.interpretation, "sql": t.sql,
-         "analyst_conclusion": t.report, "similarity": round(s, 3)} for t, s in hits
+         "conclusion_method": t.report, "similarity": round(s, 3)} for t, s in hits
     ]}
 
 

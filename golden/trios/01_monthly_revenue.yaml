@@ -16,7 +16,6 @@ sql: |
   GROUP BY month
   ORDER BY month
 report: >
-  Revenue grew steadily month over month; growth came mainly from order volume while AOV stayed
-  roughly flat, so acquisition is the main lever. The current month is partial (month-to-date) and
-  should not be compared directly with complete months.
+  Lead with the trend over the period: first vs last complete month and the % change. Decompose the change into order volume and AOV and say which moved more. Label the current month as month-to-date and do not compare it with complete months.
+eval_question: What was our monthly net revenue trend over the last 12 months?
 tags: [revenue, trend, time-series, monthly, aov]

@@ -32,6 +32,7 @@ HELP = """\
 | `/prefs [key=value \\| clear]` | view/set preferences (format, depth, charts, language, focus, note) |
 | `/persona [history \\| rollback <v>]` | view the persona; admins can roll back |
 | `/trace [id]` | step-by-step trace of the last (or given) turn |
+| `/transcript` | full conversation incl. tool calls and results (redacted) |
 | `/stats [days]` | agent metrics |
 | `/good`, `/bad [comment]` | rate the last answer |
 | `/new` | start a new conversation |
@@ -69,6 +70,18 @@ def render_trace(events: list[dict]) -> None:
         style = "red" if e["event"] in {"error", "llm_error", "tool_error", "guardrail_block", "llm_unavailable"} else ""
         table.add_row(str(offset_ms(events, e)), e["event"], summarize(e), style=style)
     console.print(table)
+
+
+def render_transcript(messages: list[dict]) -> None:
+    if not messages:
+        console.print("[yellow]No messages in that conversation.[/]")
+        return
+    style = {"user": "bold cyan", "assistant": "bold green", "tool": "magenta"}
+    for m in messages:
+        label = m["role"] + (f" ({m['tool']})" if m.get("tool") else "")
+        console.print(f"[{style.get(m['role'], 'white')}]{label}:[/] {m['text']}", markup=True, highlight=False)
+        for c in m.get("tool_calls") or []:
+            console.print(f"  [magenta]→ {c['name']}[/] {json.dumps(c['args'], ensure_ascii=False)}", highlight=False)
 
 
 def render_metrics(m: dict) -> None:
@@ -197,6 +210,8 @@ def chat(
                     console.print(svc.preferences(user) or "[dim]No preferences yet.[/]")
                 elif cmd == "persona":
                     _persona_command(svc, user, arg)
+                elif cmd == "transcript":
+                    render_transcript(svc.transcript(user, arg or session_id))
                 elif cmd == "trace":
                     tid = arg or last_trace or svc.last_trace_id(user, session_id)
                     render_trace(svc.trace(user, tid) if tid else [])
@@ -256,6 +271,13 @@ def users():
     for p in Directory(get_settings().users_file).all():
         table.add_row(p.user_id, p.display_name, p.role, p.scope.describe())
     console.print(table)
+
+
+@app.command()
+def transcript(session_id: str, user: str = typer.Option("ceo", "--user", "-u")):
+    """Dump a whole conversation: messages, tool calls and tool results (PII-redacted)."""
+    _quiet_logs()
+    render_transcript(_service().transcript(user, session_id))
 
 
 @app.command()

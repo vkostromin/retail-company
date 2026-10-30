@@ -29,11 +29,15 @@ def compute_metrics(tracer: Tracer, days: int = 7, user_id: str | None = None) -
     latencies = [t.get("latency_ms", 0) for t in turns]
     tokens = [t.get("tokens", 0) for t in turns]
     costs = [t.get("cost_usd", 0.0) for t in turns]
+    llm_calls = [t.get("llm_calls", 0) for t in turns]
+    reasoning = [t.get("tokens_reasoning", 0) for t in turns]
 
     sql_turns = first_try_ok = corrected = gave_up = empty = 0
     errors_by_type: Counter = Counter()
     guard_blocks: Counter = Counter()
-    redactions = fallbacks = retries = 0
+    redactions: Counter = Counter()
+    privacy: Counter = Counter()
+    fallbacks = retries = bytes_scanned = 0
     confirmations: Counter = Counter()
     for evs in by_trace.values():
         attempts = [e for e in evs if e["event"] == "sql_attempt"]
@@ -46,12 +50,16 @@ def compute_metrics(tracer: Tracer, days: int = 7, user_id: str | None = None) -
             else:
                 gave_up += 1
             empty += sum(1 for a in attempts if a.get("status") == "ok" and a.get("rows") == 0)
+            bytes_scanned += sum(int(a.get("bytes_processed") or 0) for a in attempts if not a.get("cache_hit"))
         for e in evs:
             ev = e["event"]
             if ev == "guardrail_block":
                 guard_blocks[e.get("category", "unknown")] += 1
             elif ev == "pii_redaction":
-                redactions += sum((e.get("counts") or {}).values())
+                redactions[e.get("layer", "unknown")] += sum((e.get("counts") or {}).values())
+            elif ev == "privacy_suppression":
+                privacy["columns_dropped"] += len(e.get("dropped_columns") or [])
+                privacy["groups_suppressed"] += int(e.get("suppressed_groups") or 0)
             elif ev == "fallback_used":
                 fallbacks += 1
             elif ev == "retry":
@@ -76,16 +84,23 @@ def compute_metrics(tracer: Tracer, days: int = 7, user_id: str | None = None) -
         "latency_ms_p50": median(latencies) if latencies else 0,
         "latency_ms_p95": _pct(latencies, 95),
         "avg_tokens_per_turn": round(sum(tokens) / n),
+        "avg_reasoning_tokens_per_turn": round(sum(reasoning) / n),
+        "avg_llm_calls_per_turn": round(sum(llm_calls) / n, 2),
         "est_cost_usd_total": round(sum(costs), 4),
+        "est_cost_usd_per_turn": round(sum(costs) / n, 5),
         "sql": {
             "turns_with_sql": sql_turns,
             "first_try_success_rate": round(first_try_ok / sql_turns, 3) if sql_turns else None,
             "self_corrected": corrected,
             "gave_up": gave_up,
             "empty_results": empty,
+            "bytes_scanned_total": bytes_scanned,
+            "avg_bytes_per_sql_turn": round(bytes_scanned / sql_turns) if sql_turns else 0,
         },
         "guardrail_blocks": dict(guard_blocks),
-        "pii_redactions": redactions,
+        "pii_redactions": sum(redactions.values()),
+        "pii_redactions_by_layer": dict(redactions),
+        "privacy_suppressions": dict(privacy),
         "llm_fallbacks": fallbacks,
         "retries": retries,
         "confirmations": dict(confirmations),

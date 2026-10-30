@@ -11,13 +11,13 @@ sql: |
          ROUND(SUM(IF(oi.status NOT IN ('Cancelled','Returned'), oi.sale_price, 0))) AS net_revenue,
          ROUND(AVG(oi.sale_price), 2) AS avg_selling_price,
          ROUND(AVG(oi.sale_price - p.cost) / AVG(oi.sale_price), 3) AS gross_margin_pct,
-         ROUND(COUNTIF(oi.status = 'Returned') / COUNT(*), 3) AS return_rate
+         ROUND(COUNTIF(oi.status = 'Returned') / COUNTIF(oi.status != 'Cancelled'), 3) AS return_rate
   FROM order_items oi
   JOIN products p ON p.id = oi.product_id
   WHERE p.brand IN ('Calvin Klein', 'Diesel')
   GROUP BY p.brand
   ORDER BY net_revenue DESC
 report: >
-  Brand A sells more units at a lower price point across a broader assortment; brand B earns more per
-  unit with similar margins. The gap is assortment breadth and price point, not returns.
+  Compare the brands on every metric in one table. Explain the gap through the differences actually found (price point, units, assortment breadth, margin, returns), largest driver first.
+eval_question: Compare Calvin Klein and Diesel. Why do they perform differently?
 tags: [product, brand, comparison, performance, margin, why]

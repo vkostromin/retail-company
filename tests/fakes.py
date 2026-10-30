@@ -35,7 +35,7 @@ class FakeLLM:
         if not self.script:
             return AIMessage("Done.")
         item = self.script.pop(0)
-        if isinstance(item, Exception):
+        if isinstance(item, BaseException):
             raise item
         if callable(item):
             return item(messages)
@@ -74,7 +74,7 @@ class FakeBQ:
 
 
 class FakeGolden:
-    def search(self, question, k=None):
+    def search(self, question, k=None, exclude=frozenset()):
         return [], "keyword"
 
 

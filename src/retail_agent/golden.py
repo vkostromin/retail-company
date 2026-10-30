@@ -34,12 +34,14 @@ class Trio:
     sql: str
     report: str
     tags: list[str] = field(default_factory=list)
+    eval_question: str | None = None  # concrete phrasing used by the offline eval suite
 
     def as_prompt(self) -> str:
         return (
             f"### Example `{self.id}`\nQ: {self.question}\n"
             f"How the analyst interpreted it: {self.interpretation.strip()}\n"
-            f"SQL:\n```sql\n{self.sql.strip()}\n```\nAnalyst conclusion: {self.report.strip()}"
+            f"SQL:\n```sql\n{self.sql.strip()}\n```\n"
+            f"How the analyst built the conclusion (method only - not facts about current data): {self.report.strip()}"
         )
 
 
@@ -107,15 +109,20 @@ class GoldenStore:
         return self._matrix
 
     # -- retrieval ----------------------------------------------------------------------
-    def search(self, question: str, k: int | None = None) -> tuple[list[tuple[Trio, float]], str]:
-        """Return [(trio, score)] and the retrieval mode used ('semantic' | 'keyword')."""
+    def search(self, question: str, k: int | None = None,
+               exclude: frozenset[str] | set[str] = frozenset()) -> tuple[list[tuple[Trio, float]], str]:
+        """Return [(trio, score)] and the retrieval mode used ('semantic' | 'keyword').
+
+        `exclude` drops trio ids (the eval suite grades a trio's question without showing that trio).
+        """
         if not self.trios:
             return [], "empty"
         k = k or self.settings.golden_top_k
+        masked = np.array([t.id in exclude for t in self.trios])
         try:
             matrix = self._index()
             q = self._embed([question], "RETRIEVAL_QUERY")[0]
-            scores = matrix @ q
+            scores = np.where(masked, -np.inf, matrix @ q)
             order = np.argsort(-scores)[:k]
             hits = [(self.trios[i], float(scores[i])) for i in order
                     if scores[i] >= self.settings.golden_min_similarity]
@@ -123,7 +130,7 @@ class GoldenStore:
             return hits, "semantic"
         except Exception as exc:  # noqa: BLE001 - degrade, never fail the turn
             log.warning("embedding retrieval unavailable, falling back to BM25: %s", exc)
-            scores = self._bm25.get_scores(_tokens(question))
+            scores = np.where(masked, 0.0, self._bm25.get_scores(_tokens(question)))
             order = np.argsort(-scores)[:k]
             top = float(scores[order[0]]) if len(order) else 0.0
             hits = [(self.trios[i], float(scores[i] / top) if top else 0.0) for i in order if scores[i] > 1.0]

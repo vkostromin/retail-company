@@ -49,7 +49,13 @@ Five principles drive every decision below:
 | UI | Web chat, Slack bot, CLI | **CLI** (Typer + Rich + prompt_toolkit), **Streamlit** web | Thin clients over a single `AgentService`. |
 | Secrets & IaC | Secret Manager, Terraform, Cloud Build | `.env` | — |
 
-**Framework experience.** *TODO(author): state your own level of experience with LangGraph here; the assessment asks for it explicitly.* Alternatives considered:
+**Framework experience.** I learned LangGraph and Google ADK in labs, not in a shipped product. My production agent work is custom runtimes:
+- **Verity:** a custom Python (FastAPI) runtime. The model plans a step and calls tools over MCP. Each step is persisted as state plus an RFC 6902 JSON Patch, so a run can be replayed or rolled back. Runs of about 100–200 steps and 50–100 tool calls stream over WebSockets, with provider fallback, context trimming, and a queue cap on concurrent runs.
+- **aiChamp:** custom TypeScript LLM workflows with versioned prompts, structured JSON outputs, and a separate model config per task.
+
+That experience shaped how LangGraph is used here. The framework supplies what it does well: the state graph, the checkpointer, and `interrupt()`/resume for human-in-the-loop. Everything a production runtime must control is explicit code around it, not framework defaults: retries and provider fallback (`LLMGateway`), per-turn budgets, guards, the error boundary with history repair, and tracing. Swapping LangGraph for a custom runtime like Verity's would therefore keep most of the code.
+
+Alternatives considered:
 - **Google ADK:** Gemini-native, with good tool-confirmation callbacks, but newer and with less control over the state machine.
 - **CrewAI:** multi-agent role-play, which this problem does not need.
 - **A hand-written loop on the Gemini SDK:** would mean rebuilding checkpointing, interrupts and tracing.
@@ -101,7 +107,8 @@ Request lifecycle (production; the prototype follows the same steps in-process):
 - `question`;
 - `interpretation`: the business definitions and approach, e.g. *"churn = 90 days without a non-cancelled order, counted in the month the 90 days elapse"*;
 - `sql`, written against the logical tables;
-- `report`: the analyst's conclusion pattern;
+- `report`: **how** the analyst built the conclusion (method only, e.g. "compare the churned cohort's channel mix and return rate with last month's"). It contains no findings, so the model cannot copy a stale cause as a fact; the prompt also labels it as method;
+- `eval_question`: a concrete phrasing used by the eval suite;
 - `tags`.
 
 **At query time** ([`load_context`](../src/retail_agent/agent/graph.py), [`GoldenStore`](../src/retail_agent/golden.py)):
@@ -120,7 +127,7 @@ Request lifecycle (production; the prototype follows the same steps in-process):
   5. embeds the trio and upserts it into the index with metadata (owner, version, tags, last_validated).
 - **Growth from usage.** A 👍 answer, together with its executed SQL and final report, becomes a *candidate trio* in an analyst review queue. Only approved candidates enter the golden set, because humans curate the knowledge base and the agent never promotes itself.
 - **Drift control.** A nightly job re-runs a dry-run for every trio. Trios that break, for example after a schema change, are quarantined and their owners notified.
-- **Quality loop.** Each trio is also an eval case: its SQL is the reference for execution accuracy (see [evaluation.md](evaluation.md)).
+- **Quality loop.** Each trio is also an eval case: its `eval_question` is asked with that trio hidden from retrieval (leave-one-out), and its SQL is the reference result (see [evaluation.md](evaluation.md)).
 - **At scale:** hybrid retrieval (semantic + BM25 with reciprocal-rank fusion), a cross-encoder or Gemini reranker, and filtering by the user's domain (e.g. a womenswear user's trios first).
 
 The prototype ships 11 trios covering revenue trends, top customers, state comparisons, churn, brand comparison, margins, returns, channels, quarterly reports, fulfilment and demographics. All of their SQL was validated live against BigQuery through the guard.
@@ -137,6 +144,7 @@ Defense in depth, with each layer independent:
 | 4 | **Scope rewrite (row/column security)** | `sql_guard.scoped_table_sql` | Each logical table is replaced by a **PII-free, entitlement-filtered subquery** with **parameterized** scope values (`@scope_brands` etc., never string-spliced). `SELECT *` from `users` only yields safe columns. Out-of-scope products are physically absent. |
 | 5 | **Result sanitizer** | [`pii.py`](../src/retail_agent/safety/pii.py) | PII-looking columns are dropped and email, phone, street address and lat/long patterns are redacted *before* results reach the LLM. |
 | 6 | **Report & output guard** | `save_report`, `guard_output` | Final redaction pass on saved reports and on every answer. |
+| 6b | **Small-group protection** | [`privacy.py`](../src/retail_agent/safety/privacy.py), `sql_guard` | Demographic lookups for specific customer ids (`WHERE users.id = …` with age/gender/city) are rejected; demographics are stripped from customer-level rows; demographic groups smaller than 5 customers are suppressed when the result has a customer-count column. |
 | 7 | **Audit** | trace events | Every block and redaction is logged with its layer and category, without logging the raw PII. |
 
 Why it holds: layers 3 and 4 do not depend on the model at all. The tests show this in [`test_classifier_outage_fails_open_but_data_layer_still_enforces`](../tests/test_guardrails_and_persona.py): with the classifier down, a request for emails still never reaches BigQuery. Because of that, the input guard **fails open** when it is unavailable: availability is kept and safety is not lost.
@@ -149,9 +157,9 @@ Why it holds: layers 3 and 4 do not depend on the model at all. The tests show t
 - The agent's service account sees only **authorized views**.
 - **Row-level access policies** use `SESSION_USER()` or a per-request principal through a connection property.
 - **Policy tags** on PII columns use the *nullify* or *hash* masking rules.
-- **k-anonymity**: a minimum group size of 5 for demographic or geographic breakdowns. It is enforced in the views and noted as future work in the prototype.
+- **k-anonymity**: a minimum group size of 5, enforced in the database by **BigQuery aggregation threshold analysis rules** on the users view (`privacy_unit_column = user_id`, `threshold = 5`). The prototype approximates this in code (layer 6b); its group-size check relies on the result carrying a customer-count column, which is why the database rule is the production answer.
 
-**Entitlement model.** Grants are additive (`brands ∪ categories ∪ departments`). Orders and users are scoped *through* in-scope order items: Alice sees orders and customers that bought Women's products. Known limitation: `orders.num_of_item` counts all items in an order, including out-of-scope ones. In production the views would expose only item-level aggregates.
+**Entitlement model.** Grants are additive (`brands ∪ categories ∪ departments`). Orders and users are scoped *through* in-scope order items: Alice sees orders and customers that bought Women's products. For scoped users, `orders.num_of_item` is recomputed from in-scope items only, so it never reveals out-of-scope purchases (Bob's average items per order is 1.02, versus 1.45 across all brands).
 
 ### Requirement 3: High-Stakes Oversight (prototype: fully implemented)
 
@@ -233,7 +241,9 @@ Measured: typical analytical turns use 10–25k tokens (about $0.005–0.015). A
 
 See [evaluation.md](evaluation.md). In summary:
 - **Offline (pre-deployment):** an **accuracy suite** compares agent answers with *reference SQL result sets*, scored by a stronger LLM judge (Gemini 3.1 Pro). The **red-team suite** uses deterministic checks against *real* PII values, scope figures and destructive-action state, and is a 100% gate. Unit and flow tests use fakes.
-- **Intent verification:** a judge rubric (answers intent, numbers match reference, clarity, explains why), plus online sampling of production traces and 👍/👎.
+- **Intent verification:** a judge rubric (answers intent, numbers match reference, **grounded in the query results the agent saw**, clarity, explains why), plus online sampling of production traces and 👍/👎.
+- **Report checks (run in the eval):** `save_report` ran; every persona section is present; 3–5 action items, each with an owner and a numeric target; share of report numbers traceable to query results is recorded.
+- **Golden trios as tests:** each trio is graded leave-one-out, which covers the brief's own examples (state underspending, churn spike, Q1 report, top customers).
 - **UX:** task success, turns-to-answer, latency p95, confirmation friction (cancel rate), abandonment, and moderated sessions with executives.
 - **Current results:** analysis 10/10, red team 14/14 (see [`evals/results/latest.md`](../evals/results/latest.md)).
 
@@ -243,15 +253,16 @@ See [observability.md](observability.md). Every turn emits structured events tie
 - `turn_start` / `turn_end`;
 - `guard_verdict`;
 - `context_loaded`, including the persona version and golden hits;
-- `llm_call`: model, tokens, latency, finish reason, cost;
+- `llm_call`: model, tokens (incl. thinking), latency, finish reason, cost, last prompt message, reply and requested tool calls;
 - `tool_call`;
-- `sql_attempt`: SQL, status, rows, bytes, error;
+- `sql_attempt`: the model's SQL, the scoped SQL BigQuery ran, status, rows, bytes, error, and the first result rows the model saw;
+- `turn_messages`: the turn's full message exchange (user, model replies, tool calls and tool results), redacted;
 - `retry`, `fallback_used`;
 - `guardrail_block`, `pii_redaction`;
 - `confirmation_*`, `deletion_executed`;
 - `error`, with a traceback.
 
-They are viewable through `/trace` and `/stats` in the CLI, the web *Traces & metrics* page, and Langfuse when it is configured. In production: OpenTelemetry spans to Cloud Trace, JSON logs to a BigQuery sink for SQL deep dives, and Cloud Monitoring SLO alerts.
+A trace alone therefore reconstructs a failing turn without Langfuse. They are viewable through `/trace`, `/transcript` and `/stats` in the CLI (and `retail-agent transcript <session>`), the web *Traces & metrics* page, and Langfuse when it is configured. In production: OpenTelemetry spans to Cloud Trace, JSON logs to a BigQuery sink for SQL deep dives, and Cloud Monitoring SLO alerts.
 
 ### Requirement 8: Agility (persona management)
 
@@ -343,7 +354,7 @@ CHART_TOOLS = [ToolSpec("make_chart", "Render a chart from a query", ChartArgs, 
 
 ## 10. Known limitations and next steps
 
-- **Entitlement depth:** orders and users are scoped through in-scope items. `orders.num_of_item` still counts out-of-scope items, and k-anonymity thresholds are not enforced yet. Production views fix both.
+- **Small-group protection is heuristic in the prototype:** suppression of small demographic groups needs a customer-count column in the result. A query that groups by city and returns only revenue is not checked. Production enforces k = 5 in BigQuery (aggregation threshold rules). Order-level fields such as `orders.status` describe the whole order, not only in-scope items.
 - **Regex PII detection** misses free-text names. DLP is needed in production; the guard architecture makes this a drop-in change.
 - **No response streaming** of tokens yet; progress events are streamed instead.
 - **Preferences are explicit only**; the implicit extractor is designed but not built.

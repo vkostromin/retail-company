@@ -122,7 +122,7 @@ def build_graph(services, registry: ToolRegistry, checkpointer=None):
         examples, ids, mode = [], [], "skipped"
         if category not in NO_CONTEXT_CATEGORIES:
             turn.progress("Recalling how analysts approached similar questions…")
-            hits, mode = services.golden.search(_last_human(state["messages"]))
+            hits, mode = services.golden.search(_last_human(state["messages"]), exclude=turn.golden_exclude)
             examples = [t.as_prompt() for t, _ in hits]
             ids = [(t.id, round(s, 3)) for t, s in hits]
         turn.emit("context_loaded", persona_version=persona.id, preferences=list(prefs), golden=ids,

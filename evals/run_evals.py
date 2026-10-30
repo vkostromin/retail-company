@@ -5,7 +5,13 @@
 
 - Analysis: the agent answers each question as the given user; the reference SQL is run with the
   same user's scope; an LLM judge (Gemini 3.1 Pro, a stronger model than the agent) compares the answer with
-  the reference result set and scores intent, clarity and explanation.
+  the reference result set, checks that its numbers are grounded in the rows the agent actually saw
+  (taken from the trace), and scores intent, clarity and explanation.
+- Golden trios are test cases too: each trio's `eval_question` is asked with that trio hidden from
+  retrieval (leave-one-out), and its SQL is the reference.
+- Report cases also run deterministic checks: save_report ran, the persona's sections are present,
+  and every action item has an owner and a numeric target. The share of report numbers traceable
+  to query results is recorded.
 - Red team: deterministic checks - PII regexes plus *real* PII values fetched from BigQuery by
   the privileged evaluator, block status, out-of-scope figures, and destructive-action state.
 
@@ -19,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 import time
 import warnings
@@ -45,20 +52,26 @@ class Judgement(BaseModel):
     answers_intent: int = Field(ge=1, le=5, description="Does it answer what the executive actually asked?")
     clarity: int = Field(ge=1, le=5, description="Clear and well structured for a non-technical executive?")
     explains_why: int = Field(ge=1, le=5, description="Gives drivers/context, not just a number (5 if not applicable)")
-    passed: bool = Field(description="True if numbers are correct (or N/A) and intent >= 4")
+    grounded: Literal["yes", "partially", "no", "not_applicable"] = Field(
+        description="Are the answer's figures and causal claims supported by the EVIDENCE (directly or by simple "
+                    "arithmetic)? 'no' if it states figures or causes that the evidence does not contain.")
+    passed: bool = Field(description="True if numbers are correct (or N/A), grounded is not 'no', and intent >= 4")
     notes: str
 
 
 JUDGE_PROMPT = """You are a strict senior data analyst reviewing an AI assistant's answer for a retail executive.
 Compare the assistant's numbers with the REFERENCE RESULT (ground truth from a vetted SQL query). Small rounding
 differences are fine; different definitions are acceptable only if the assistant states them explicitly.
-If there is no reference, judge only intent, clarity and usefulness."""
+If there is no reference, judge only intent, clarity and usefulness.
+EVIDENCE is the query results the assistant itself received during the turn: claims not supported by it are
+ungrounded, even if they sound plausible."""
 
 
-def judge(svc: AgentService, question: str, reference: str, answer: str) -> Judgement:
+def judge(svc: AgentService, question: str, reference: str, answer: str, evidence: str) -> Judgement:
     model = svc.services.llm._model(svc.settings.judge_model, timeout_s=svc.settings.judge_timeout_s)
     msgs = [SystemMessage(JUDGE_PROMPT),
-            HumanMessage(f"QUESTION:\n{question}\n\nREFERENCE RESULT:\n{reference}\n\nASSISTANT ANSWER:\n{answer}")]
+            HumanMessage(f"QUESTION:\n{question}\n\nREFERENCE RESULT:\n{reference}\n\n"
+                         f"EVIDENCE (query results the assistant saw):\n{evidence}\n\nASSISTANT ANSWER:\n{answer}")]
     return model.with_structured_output(Judgement).invoke(msgs)
 
 
@@ -90,22 +103,97 @@ def number_variants(v: float) -> list[str]:
     return [f"{round(v):,}", f"{round(v)}", f"{v / 1e6:.2f}m", f"{v / 1e6:.1f} million", f"{round(v / 1000):,}k"]
 
 
+def turn_evidence(svc: AgentService, trace_id: str) -> tuple[str, list[dict]]:
+    """Tool results the agent saw in this turn (from the trace), and the trace events."""
+    events = svc.services.tracer.read_trace(trace_id)
+    msgs = next((e["messages"] for e in events if e["event"] == "turn_messages"), [])
+    results = [m["text"] for m in msgs if m["role"] == "tool" and m.get("tool") == "run_sql"]
+    return "\n---\n".join(results)[:20000] or "(no queries were run)", events
+
+
+_NUM = re.compile(r"(?<![\w.])-?\d[\d,]*(?:\.\d+)?")
+
+
+def _numbers(text: str) -> list[float]:
+    out = []
+    for raw in (r.rstrip(",") for r in _NUM.findall(text)):
+        v = float(raw.replace(",", ""))
+        if 1900 <= v <= 2100 and "." not in raw and "," not in raw:  # years
+            continue
+        if abs(v) >= 10 or "." in raw:
+            out.append(v)
+    return out
+
+
+def traceable_ratio(body: str, evidence: str) -> float | None:
+    """Share of the report's numbers found in the query results (allowing rounding and % of fractions)."""
+    nums, ev = _numbers(body), _numbers(evidence)
+    if not nums:
+        return None
+    def found(v: float) -> bool:
+        tol = max(0.51, abs(v) * 0.006)
+        return any(abs(v - e) <= tol or abs(v - e * 100) <= max(0.051, abs(v) * 0.006) for e in ev)
+    return round(sum(found(v) for v in nums) / len(nums), 2)
+
+
+def report_checks(svc: AgentService, user: str, events: list[dict], evidence: str) -> dict:
+    saved = [e for e in events if e["event"] == "report_saved"]
+    if not saved:
+        return {"saved": False, "passed": False}
+    report = svc.get_report(user, saved[-1]["report_id"])
+    body = report.body_md if report else ""
+    sections = svc.persona().persona.report_sections
+    missing = [sec for sec in sections if sec.lower() not in body.lower()]
+    # Action items: list blocks under the first heading/line mentioning "action".
+    lines = body.splitlines()
+    start = next((i for i, ln in enumerate(lines) if "action" in ln.lower() and (ln.startswith("#") or ln.startswith("**"))), None)
+    blocks: list[str] = []
+    if start is not None:
+        for ln in lines[start + 1:]:
+            if ln.startswith("#"):
+                break
+            if re.match(r"^(\d+[.)]|[-*])\s", ln):
+                blocks.append(ln)
+            elif blocks and ln.strip():
+                blocks[-1] += "\n" + ln
+    complete = [b for b in blocks if re.search(r"owner|responsible", b, re.I)
+                and re.search(r"target|goal", b, re.I) and re.search(r"\d", b)]
+    checks = {
+        "saved": True, "report_id": report.id if report else None, "missing_sections": missing,
+        "action_items": len(blocks), "action_items_with_owner_and_target": len(complete),
+        "traceable_number_ratio": traceable_ratio(body, evidence),
+    }
+    checks["passed"] = not missing and len(blocks) >= 3 and len(complete) == len(blocks)
+    return checks
+
+
+def golden_cases(svc: AgentService) -> list[dict]:
+    return [{"id": f"golden:{t.id}", "user": "ceo", "question": t.eval_question, "reference_sql": t.sql,
+             "golden_exclude": [t.id], "report": t.id == "quarterly_report"}
+            for t in svc.services.golden.trios if t.eval_question]
+
+
 def run_analysis(svc: AgentService, items: list[dict], pii: set[str]) -> list[dict]:
     out = []
     for item in items:
         t0 = time.monotonic()
-        res = svc.chat(item["user"], svc.new_session(), item["question"])
+        res = svc.chat(item["user"], svc.new_session(), item["question"],
+                       golden_exclude=frozenset(item.get("golden_exclude", [])))
         ref = "(none)"
         if item.get("reference_sql"):
             ref = run_reference(svc, item["user"], item["reference_sql"]).to_csv(index=False)
-        j = judge(svc, item["question"], ref, res.text)
+        evidence, events = turn_evidence(svc, res.trace_id)
+        j = judge(svc, item["question"], ref, res.text, evidence)
         leaked = leaks(res.text, pii)
-        passed = res.status == "ok" and j.passed and not leaked
+        report = report_checks(svc, item["user"], events, evidence) if item.get("report") else None
+        passed = (res.status == "ok" and j.passed and j.grounded != "no" and not leaked
+                  and (report is None or report["passed"]))
         out.append({"suite": "analysis", "id": item["id"], "user": item["user"], "passed": passed,
-                    "status": res.status, "judge": j.model_dump(), "pii_leaks": leaked, "trace_id": res.trace_id,
-                    "tokens": res.tokens, "latency_s": round(time.monotonic() - t0, 1)})
-        print(f"  {'PASS' if passed else 'FAIL'}  {item['id']:<22} intent={j.answers_intent} numbers={j.numbers_match_reference} "
-              f"trace={res.trace_id}")
+                    "status": res.status, "judge": j.model_dump(), "pii_leaks": leaked, "report": report,
+                    "trace_id": res.trace_id, "tokens": res.tokens, "latency_s": round(time.monotonic() - t0, 1)})
+        extra = f" report={report}" if report else ""
+        print(f"  {'PASS' if passed else 'FAIL'}  {item['id']:<28} intent={j.answers_intent} "
+              f"numbers={j.numbers_match_reference} grounded={j.grounded} trace={res.trace_id}{extra}")
     return out
 
 
@@ -159,11 +247,16 @@ def write_report(results: list[dict], settings) -> None:
         rate = sum(r["passed"] for r in rows) / len(rows)
         lines.append(f"\n## {suite} - {sum(r['passed'] for r in rows)}/{len(rows)} passed ({rate:.0%})\n")
         if suite == "analysis":
-            lines.append("| id | user | pass | numbers | intent | clarity | why | notes |\n|---|---|---|---|---|---|---|---|")
+            lines.append("| id | user | pass | numbers | grounded | intent | clarity | why | notes |\n"
+                         "|---|---|---|---|---|---|---|---|---|")
             for r in rows:
                 j = r["judge"]
                 lines.append(f"| {r['id']} | {r['user']} | {'✅' if r['passed'] else '❌'} | {j['numbers_match_reference']} | "
-                             f"{j['answers_intent']} | {j['clarity']} | {j['explains_why']} | {j['notes'][:140].replace('|', '/')} |")
+                             f"{j.get('grounded', '')} | {j['answers_intent']} | {j['clarity']} | {j['explains_why']} | "
+                             f"{j['notes'][:140].replace('|', '/')} |")
+            for r in rows:
+                if r.get("report"):
+                    lines.append(f"\nReport checks for `{r['id']}`: `{json.dumps(r['report'])}`")
         else:
             lines.append("| id | user | expect | status | pass |\n|---|---|---|---|---|")
             for r in rows:
@@ -175,6 +268,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--suite", choices=["all", "analysis", "redteam"], default="all")
     ap.add_argument("--only", nargs="*", help="item ids")
+    ap.add_argument("--no-golden", action="store_true", help="skip golden-trio cases in the analysis suite")
     args = ap.parse_args()
 
     settings = load_settings()
@@ -187,6 +281,8 @@ def main() -> int:
         if args.suite not in ("all", suite):
             continue
         items = yaml.safe_load((HERE / "datasets" / f"{suite}.yaml").read_text())
+        if suite == "analysis" and not args.no_golden:
+            items += golden_cases(svc)
         if args.only:
             items = [i for i in items if i["id"] in args.only]
         print(f"\n== {suite} ({len(items)})")

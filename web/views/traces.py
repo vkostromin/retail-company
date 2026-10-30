@@ -2,9 +2,7 @@
 
 import pandas as pd
 import streamlit as st
-from common import current_user, service
-
-from retail_agent.observability.render import offset_ms, summarize
+from common import current_user, render_messages, render_timeline, service
 
 svc = service()
 me = current_user()
@@ -56,7 +54,9 @@ trace_id = st.selectbox("Inspect a turn", df.trace_id.tolist())
 events = svc.trace(me.user_id, trace_id) if trace_id else []
 if events:
     st.subheader(f"Timeline of `{trace_id}`")
-    st.dataframe(pd.DataFrame([{"+ms": offset_ms(events, e), "event": e["event"], "details": summarize(e)}
-                               for e in events]), hide_index=True, width="stretch")
+    render_timeline(events)
+    convo = next((e["messages"] for e in events if e["event"] == "turn_messages"), [])
+    with st.expander(f"Conversation in this turn ({len(convo)} messages, redacted)", expanded=False):
+        render_messages(convo)
     with st.expander("Raw events (JSON)"):
         st.json(events)

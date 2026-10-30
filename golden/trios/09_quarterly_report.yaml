@@ -10,9 +10,9 @@ sql: |
   WITH q AS (
     SELECT DATE_TRUNC(DATE(oi.created_at), QUARTER) AS quarter,
            SUM(IF(oi.status NOT IN ('Cancelled','Returned'), oi.sale_price, 0)) AS net_revenue,
-           COUNT(DISTINCT oi.order_id) AS orders,
-           COUNT(DISTINCT oi.user_id) AS active_customers,
-           COUNTIF(oi.status = 'Returned') / COUNT(*) AS return_rate
+           COUNT(DISTINCT IF(oi.status NOT IN ('Cancelled','Returned'), oi.order_id, NULL)) AS orders,
+           COUNT(DISTINCT IF(oi.status != 'Cancelled', oi.user_id, NULL)) AS active_customers,
+           COUNTIF(oi.status = 'Returned') / COUNTIF(oi.status != 'Cancelled') AS return_rate
     FROM order_items oi
     GROUP BY quarter
   )
@@ -22,6 +22,6 @@ sql: |
   WHERE quarter >= DATE_SUB(DATE_TRUNC(CURRENT_DATE(), QUARTER), INTERVAL 6 QUARTER)
   ORDER BY quarter
 report: >
-  Executive summary with KPI table (QoQ and YoY), 3 insights backed by numbers (growth driver,
-  weakest category, return trend) and action items with an owner and a target metric for next quarter.
+  Sections: executive summary; KPI table for the quarter vs the previous quarter and vs the same quarter last year; three insights, each backed by a number from the queries (growth driver, weakest category, return trend); three to five action items for the next quarter, each with an owner, a target metric and a deadline. Save the report.
+eval_question: Create a report for Q1 2026 including insights and action items for Q2.
 tags: [report, quarterly, q1, kpi, insights, action-items, executive]

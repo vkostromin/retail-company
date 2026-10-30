@@ -20,6 +20,6 @@ sql: |
   ORDER BY total_spend DESC
   LIMIT 10
 report: >
-  The top 10 customers are repeat buyers (several orders each) rather than single large baskets;
-  most come from Search and Organic channels. Recommend a VIP retention programme for this segment.
+  A ranked table by user id with spend, orders and first/last purchase dates. Then comment, from the returned rows only, on whether top spend comes from repeat buying or single large baskets and which countries/channels dominate. Close with one retention action for this segment.
+eval_question: Who are our top 10 customers by total spend?
 tags: [customers, top, spend, ranking, ltv]

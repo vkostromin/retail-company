@@ -7,7 +7,7 @@ sql: |
   WITH per_user AS (
     SELECT oi.user_id,
            SUM(IF(oi.status NOT IN ('Cancelled','Returned'), oi.sale_price, 0)) AS spend,
-           COUNT(DISTINCT oi.order_id) AS orders
+           COUNT(DISTINCT IF(oi.status NOT IN ('Cancelled','Returned'), oi.order_id, NULL)) AS orders
     FROM order_items oi
     GROUP BY oi.user_id
   )
@@ -20,6 +20,6 @@ sql: |
   GROUP BY u.traffic_source
   ORDER BY revenue_per_customer DESC
 report: >
-  Search brings the most customers; value per customer is similar across channels, so budget should
-  follow acquisition cost. Repeat rate is the differentiator to watch.
+  Compare channel size with revenue per customer and repeat rate. Budget advice depends on value relative to acquisition cost, which is not in this dataset - say so instead of assuming it.
+eval_question: Which acquisition channels bring the most valuable customers?
 tags: [marketing, channel, traffic_source, acquisition, customers, ltv]

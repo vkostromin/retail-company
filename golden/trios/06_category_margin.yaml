@@ -14,6 +14,6 @@ sql: |
   GROUP BY p.department, p.category
   ORDER BY gross_margin_pct DESC
 report: >
-  Margins are fairly tight across categories; the spread between best and worst is several points.
-  High-revenue, low-margin categories are the priority for supplier renegotiation.
+  Rank categories by margin %, and highlight high-revenue / low-margin categories as the priority because they move total profit most.
+eval_question: Which product categories have the best and worst gross margin?
 tags: [product, category, margin, profitability]

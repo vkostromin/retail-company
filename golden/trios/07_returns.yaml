@@ -14,6 +14,6 @@ sql: |
   ORDER BY returned_revenue DESC
   LIMIT 15
 report: >
-  Returns are concentrated in high-price apparel (outerwear, jeans). Action: improve size guidance and
-  product imagery for the top returned-revenue categories.
+  Rank by returned revenue (business impact) and show the rate next to it. Recommend actions for the top categories by impact, not by rate alone.
+eval_question: Which categories have the highest return rates and how much revenue do returns cost us?
 tags: [returns, category, operations, revenue-loss]

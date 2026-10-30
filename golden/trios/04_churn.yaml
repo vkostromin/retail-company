@@ -28,7 +28,6 @@ sql: |
   WHERE c.month >= DATE_SUB(DATE_TRUNC(CURRENT_DATE(), MONTH), INTERVAL 12 MONTH)
   ORDER BY c.month
 report: >
-  Churn rate rose last month. The churned cohort skews to customers acquired three months earlier
-  through paid channels (Facebook/Display) with a single first order and an above-average return rate.
-  Actions: second-purchase incentive at day 30-60, review paid-channel targeting, investigate returns.
+  Show the monthly churn-rate series and quantify last month against the previous months. To explain a spike, compare the churned cohort with the previous month's churned cohort on acquisition channel, first-order category and return experience, one query per dimension. Name only causes this comparison supports, then propose retention actions for the segment it identifies.
+eval_question: Why did our churn rate spike last month?
 tags: [churn, retention, cohort, why, spike, customers]

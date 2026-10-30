@@ -2,7 +2,9 @@
 
 import pandas as pd
 import streamlit as st
-from common import current_user, service
+from common import current_user, render_messages, render_timeline, service
+
+from retail_agent.service import AccessDenied
 
 svc = service()
 me = current_user()
@@ -36,6 +38,10 @@ with st.sidebar:
         st.toast(f"Restored reports {ids}" if ids else "Nothing to undo")
         st.rerun()
 
+    if st.button("🧾 Show transcript", width="stretch", help="Whole conversation incl. tool calls (also: /transcript)"):
+        st.session_state["panel"] = ("transcript", "")
+        st.rerun()
+
     st.markdown("#### ⚙️ My preferences")
     prefs = svc.preferences(uid)
     st.caption(", ".join(f"{k}: {v}" for k, v in prefs.items()) or "None yet - just tell the assistant, "
@@ -62,9 +68,101 @@ if last and last.status != "awaiting_confirmation":
         st.toast("Thanks - we'll look into it.")
 
 
+COMMANDS_HELP = """**Commands** (handled by the app, not sent to the assistant)
+
+| Command | |
+|---|---|
+| `/transcript` | whole conversation incl. tool calls and tool results (redacted) |
+| `/trace [id]` | step-by-step trace of the last (or given) turn |
+| `/reports [text]` | your saved reports |
+| `/undo` | restore the last deleted reports |
+| `/prefs [key=value \\| clear]` | view or set preferences (format, depth, charts, language, focus, note) |
+| `/new` | start a new conversation |
+| `/help` | this list |
+"""
+
+
+def handle_command(text: str) -> None:
+    """Slash commands are UI actions, as in the CLI - never sent to the model."""
+    cmd, _, arg = text[1:].partition(" ")
+    arg = arg.strip()
+    if cmd == "new":
+        st.session_state["session_id"] = svc.new_session()
+        st.session_state.pop("last", None)
+        st.session_state.pop("panel", None)
+    elif cmd == "undo":
+        ids = svc.undo_delete(uid, sid)
+        st.toast(f"Restored reports {ids}" if ids else "Nothing to undo")
+    elif cmd == "prefs" and arg:
+        if arg == "clear":
+            svc.clear_preferences(uid)
+        elif "=" in arg:
+            k, _, v = arg.partition("=")
+            try:
+                svc.set_preference(uid, k.strip(), v.strip())
+            except ValueError as e:
+                st.session_state["panel"] = ("error", str(e))
+                return
+        st.session_state["panel"] = ("prefs", "")
+    elif cmd in {"transcript", "trace", "reports", "prefs", "help"}:
+        st.session_state["panel"] = (cmd, arg)
+    else:
+        st.session_state["panel"] = ("error", f"Unknown command `/{cmd}`. Type `/help`.")
+
+
+def render_panel(kind: str, arg: str) -> None:
+    with st.container(border=True):
+        head, close = st.columns([8, 1])
+        if close.button("✕", key="close-panel", help="Close"):
+            st.session_state.pop("panel", None)
+            st.rerun()
+        try:
+            if kind == "help":
+                st.markdown(COMMANDS_HELP)
+            elif kind == "error":
+                st.warning(arg)
+            elif kind == "transcript":
+                messages = svc.transcript(uid, arg or sid)
+                head.markdown(f"**Transcript** of `{arg or sid}` · {len(messages)} messages (redacted)")
+                if messages:
+                    render_messages(messages)
+                else:
+                    st.caption("No messages yet.")
+            elif kind == "trace":
+                tid = arg or (last.trace_id if last else None) or svc.last_trace_id(uid, sid)
+                events = svc.trace(uid, tid) if tid else []
+                head.markdown(f"**Trace** `{tid}`" if tid else "**Trace**")
+                if events:
+                    render_timeline(events)
+                else:
+                    st.caption("No trace yet.")
+            elif kind == "reports":
+                reports = svc.list_reports(uid, arg or None)
+                head.markdown(f"**Your reports** ({len(reports)})")
+                st.dataframe(pd.DataFrame([{"id": r.id, "title": r.title, "created": r.created_at,
+                                            "conversation": r.conversation_id} for r in reports]),
+                             hide_index=True, width="stretch")
+            elif kind == "prefs":
+                head.markdown("**Your preferences**")
+                st.json(svc.preferences(uid) or {})
+        except AccessDenied as e:
+            st.error(str(e))
+
+
 def run(fn, *args):
+    def progress(message: str) -> None:
+        # A new input triggers a Streamlit rerun, raised at the next st.* call. Swallow it here so
+        # the running turn finishes and is saved; the new input is handled by the next script run.
+        try:
+            status.update(label=message)
+        except BaseException:  # noqa: BLE001
+            pass
+
     with st.status("Thinking…", expanded=False) as status:
-        result = fn(*args, progress=lambda m: status.update(label=m))
+        try:
+            result = fn(*args, progress=progress)
+        finally:
+            st.session_state.pop("pending_prompt", None)
         status.update(label="Done", state="complete")
     st.session_state["last"] = result
     st.rerun()
@@ -87,7 +185,21 @@ if pending:
         if c2.button("Cancel", width="stretch"):
             run(svc.resume, uid, sid, {"confirmed": False, "token": pending["token"]})
 
-if prompt := st.chat_input("e.g. Why did revenue change last month compared to the month before?"):
+if panel := st.session_state.get("panel"):
+    render_panel(*panel)
+
+# Two-phase submit: store the prompt and rerun with the input disabled, then run the turn. A second
+# message can therefore never interrupt (and orphan) a turn that is still running.
+busy = st.session_state.get("pending_prompt")
+if prompt := st.chat_input("Working on your question…" if busy else "Ask a question, or type /help for commands",
+                           disabled=bool(busy)):
+    if prompt.strip().startswith("/"):
+        handle_command(prompt.strip())
+    else:
+        st.session_state["pending_prompt"] = prompt
+    st.rerun()
+
+if busy:
     with st.chat_message("user", avatar="🧑‍💼"):
-        st.markdown(prompt)
-    run(svc.chat, uid, sid, prompt)
+        st.markdown(busy)
+    run(svc.chat, uid, sid, busy)

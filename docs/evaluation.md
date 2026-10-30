@@ -6,9 +6,9 @@ The pipeline has three layers, from fast to slow. Every pull request runs layers
 
 | Layer | What | How | Gate |
 |---|---|---|---|
-| 1. Unit & flow tests | Guard rules, scope rewrite, PII redaction, deletion flow, self-correction, budgets, outages, fallback, breaker, persona, preferences, metrics | `make test`: 63 offline tests using fake LLM and BigQuery clients ([`tests/`](../tests)). They are deterministic, need no credentials and finish in seconds. | 100% |
+| 1. Unit & flow tests | Guard rules, scope rewrite, scoped order sizes, small-group protection, PII redaction, deletion flow, trace reconstruction, self-correction, budgets, outages, fallback, breaker, persona, preferences, metrics | `make test`: 80 offline tests using fake LLM and BigQuery clients ([`tests/`](../tests)). They are deterministic, need no credentials and finish in seconds. | 100% |
 | 2. Red-team suite | PII exfiltration (direct, raw SQL, geo, multilingual), prompt injection, scope escape, social engineering, DML, system-prompt extraction, off-topic, deletion without confirmation | `make redteam` ([`evals/datasets/redteam.yaml`](../evals/datasets/redteam.yaml)). Checks are **deterministic**: answers are scanned for PII patterns **and for real PII values** of the top 300 customers, which the privileged evaluator fetches from BigQuery. Out-of-scope answers are checked for the true out-of-scope figure, and the report count must be unchanged after a deletion attempt. | **100%** |
-| 3. Accuracy & report quality | Real executive questions across users with different scopes: revenue, rankings, comparisons, return rates, cancellations, prices, demographics, dataset overview, multi-step "why" | `make eval` ([`evals/datasets/analysis.yaml`](../evals/datasets/analysis.yaml)). The agent answers as the given user. **Reference SQL is run with the same user's scope**, and a stronger **LLM judge** (Gemini 3.1 Pro) compares the answer with the reference **result set**, not the SQL text. It scores numbers, intent (1–5), clarity (1–5) and explanation (1–5). | ≥ baseline (no regression) |
+| 3. Accuracy & report quality | (a) 10 executive questions across users with different scopes ([`analysis.yaml`](../evals/datasets/analysis.yaml)): revenue, rankings, comparisons, return rates, cancellations, prices, demographics, dataset overview, multi-step "why". (b) **All 11 golden trios**, including the brief's own examples: state X vs Y underspending, churn spike, Q1 report with Q2 action items, top customers by spend. | `make eval`. The agent answers as the given user. **Reference SQL is run with the same user's scope**. Golden cases are **leave-one-out**: the trio under test is hidden from retrieval, so the agent cannot copy its SQL. A stronger **LLM judge** (Gemini 3.1 Pro) compares the answer with the reference **result set** and with the **evidence** (the query results the agent actually saw, taken from the trace). It scores numbers, **grounded** (no figures or causes beyond the evidence), intent, clarity and explanation. Report cases add deterministic **report checks** (below). | ≥ baseline (no regression) |
 
 Why compare result sets and not SQL? There are many correct ways to write a query. What matters to an executive is that the numbers and definitions are right. Different definitions (e.g. "ordering customers" vs "all users") are acceptable only if the answer states them, and the judge checks for that.
 
@@ -19,12 +19,15 @@ Why compare result sets and not SQL? There are many correct ways to write a quer
 
 ## 2. Verifying that reports answer the user's intent
 
-- **Offline:** the judge rubric (`answers_intent`, `numbers_match_reference`, `explains_why`, `clarity`). The golden trios double as test cases, since their SQL is the reference for their question.
+- **Offline (runs in `make eval`):**
+  - the judge rubric: `answers_intent`, `numbers_match_reference`, `grounded`, `explains_why`, `clarity`. A turn fails if its figures or causes are not supported by the query results it saw;
+  - **report checks** on report cases ([`report_checks`](../evals/run_evals.py)): `save_report` ran; every persona section is present; 3–5 action items, each with an owner and a numeric target; the share of report numbers traceable to query results is recorded (`traceable_number_ratio`);
+  - golden trios as leave-one-out test cases (their SQL is the reference).
 - **Online (production):**
   - **Sampled LLM-as-judge** on about 5% of production traces, using the trace's executed SQL and results as evidence. It answers: did the answer use these numbers correctly, and does it address the question?
   - **Explicit feedback**: 👍/👎 in the web app, `/good` and `/bad` in the CLI. 👎 traces enter a weekly review queue.
   - **Implicit signals**: immediate rephrasing of the same question, "that's wrong" follow-ups, abandonment after an answer.
-  - **Report-specific checks**: required sections present (from the persona), every number traceable to an executed query (checked by a judge against the trace), and action items concrete (owner, metric, target).
+  - **Report checks** as above, run on sampled production reports (the trace contains the evidence).
 
 ## 3. Evaluating UX
 

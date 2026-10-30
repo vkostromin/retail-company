@@ -14,5 +14,6 @@ sql: |
   GROUP BY month
   ORDER BY month
 report: >
-  Shipping and delivery times are stable month to month; no operational deterioration detected.
+  Report average hours to ship and to deliver by month. Call out months that deviate clearly from the trailing average; otherwise state that fulfilment is stable.
+eval_question: How fast do we ship and deliver orders, and is it getting worse?
 tags: [operations, shipping, delivery, fulfillment, trend]

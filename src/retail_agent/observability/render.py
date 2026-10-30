@@ -22,6 +22,12 @@ def summarize(e: dict) -> str:
         return (f"{e.get('model')} in={e.get('input_tokens')} out={e.get('output_tokens')} "
                 f"(thinking={e.get('reasoning_tokens', 0)}) "
                 f"{e.get('latency_ms')}ms finish={e.get('finish_reason')} ${e.get('cost_usd')}")
+    if ev == "turn_messages":
+        msgs = e.get("messages") or []
+        return " | ".join(
+            f"{m['role']}: " + (", ".join(c["name"] for c in m["tool_calls"]) if m.get("tool_calls") else m["text"][:80])
+            for m in msgs
+        )
     if ev == "tool_call":
         return f"{e.get('tool')} -> {e.get('status')} ({e.get('latency_ms')}ms)"
     if ev == "sql_attempt":

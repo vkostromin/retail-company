@@ -42,6 +42,9 @@ LOGICAL_TABLES: dict[str, list[str]] = {
     "users": ["id", "age", "gender", "city", "state", "country", "traffic_source", "created_at"],
 }
 
+# Quasi-identifiers: harmless in aggregates, re-identifying when tied to one customer.
+QUASI_IDENTIFIERS = {"age", "gender", "city"}
+
 PII_COLUMNS = {
     "first_name", "last_name", "email", "street_address", "postal_code", "latitude",
     "longitude", "user_geom",
@@ -135,7 +138,13 @@ def scoped_table_sql(table: str, principal: Principal, dataset: str) -> str:
     if table == "order_items":
         return f"SELECT {cols} FROM {ds}.order_items` WHERE product_id IN ({in_scope_products})"
     if table == "orders":
-        return f"SELECT {cols} FROM {ds}.orders` WHERE order_id IN (SELECT order_id FROM ({in_scope_items}))"
+        # num_of_item is recomputed from in-scope items only, so it never reveals out-of-scope purchases.
+        order_cols = ", ".join(f"o.{c}" for c in LOGICAL_TABLES["orders"] if c != "num_of_item")
+        return (
+            f"SELECT {order_cols}, s.num_of_item FROM {ds}.orders` AS o JOIN ("
+            f"SELECT order_id, COUNT(*) AS num_of_item FROM {ds}.order_items` "
+            f"WHERE product_id IN ({in_scope_products}) GROUP BY order_id) AS s ON s.order_id = o.order_id"
+        )
     if table == "users":
         return f"SELECT {cols} FROM {ds}.users` WHERE id IN (SELECT user_id FROM ({in_scope_items}))"
     raise KeyError(table)
@@ -187,6 +196,15 @@ def guard_sql(sql: str, principal: Principal, dataset: str, max_rows: int = 500)
                 "city/state/country/age/gender instead of personal details.",
             )
 
+    if _targets_individual_customers(root) and any(
+        c.name.lower() in QUASI_IDENTIFIERS for c in root.find_all(exp.Column)
+    ):
+        raise SQLGuardError(
+            "individual_demographics",
+            "Demographics (age, gender, city) of specific customers cannot be looked up.",
+            "Analyse demographics for groups of customers instead (e.g. by age band or city across many customers).",
+        )
+
     used: set[str] = set()
     replacements: list[tuple[exp.Table, exp.Expression]] = []
     for table in root.find_all(exp.Table):
@@ -231,6 +249,20 @@ def guard_sql(sql: str, principal: Principal, dataset: str, max_rows: int = 500)
         params=scope_params(principal),
         tables=used,
     )
+
+
+def _targets_individual_customers(root: exp.Expression) -> bool:
+    """True if the query filters customers by literal id (`users.id = 123`, `user_id IN (1, 2)`)."""
+    users_aliases = {(t.alias or t.name).lower() for t in root.find_all(exp.Table) if t.name.lower() == "users"}
+    for node in root.find_all(exp.EQ, exp.In):
+        cols = [c for c in (node.this, node.expression) if isinstance(c, exp.Column)]
+        literals = [x for x in [node.this, node.expression, *node.expressions] if isinstance(x, exp.Literal)]
+        for col in cols:
+            name, table = col.name.lower(), (col.table or "").lower()
+            is_customer_id = name == "user_id" or (name == "id" and (table in users_aliases or (not table and users_aliases)))
+            if is_customer_id and literals:
+                return True
+    return False
 
 
 def extract_string_filters(sql: str) -> list[StringFilter]:

@@ -23,7 +23,7 @@ from langgraph.types import Command
 from .agent.graph import build_graph
 from .config import Settings, get_settings
 from .observability.metrics import compute_metrics
-from .observability.tracer import TraceCallback, TurnContext, safe_preview
+from .observability.tracer import TraceCallback, TurnContext, compact_message, safe_preview
 from .persona.store import Persona, PersonaVersion
 from .safety.entitlements import Principal
 from .services import Services, build_services
@@ -95,13 +95,15 @@ class AgentService:
 
     # ------------------------------------------------------------------ chat
     def chat(self, user_id: str, session_id: str, text: str,
-             progress: Callable[[str], None] | None = None, persona_override: Persona | None = None) -> TurnResult:
+             progress: Callable[[str], None] | None = None, persona_override: Persona | None = None,
+             golden_exclude: frozenset[str] = frozenset()) -> TurnResult:
         self.principal(user_id)  # raises UnknownUserError
         self._check_owner(session_id, user_id)
         if self.pending_confirmation(session_id):
             # A new message while a confirmation is open means "no".
             self.resume(user_id, session_id, {"confirmed": False}, progress)
         turn = TurnContext(self.services.tracer, session_id, user_id, progress=progress or (lambda _m: None))
+        turn.golden_exclude = frozenset(golden_exclude)
         text = (text or "").strip()
         if len(text) > MAX_INPUT_CHARS:
             turn.emit("input_truncated", chars=len(text))
@@ -135,6 +137,7 @@ class AgentService:
                          "trace_id": turn.trace_id},
             "run_name": "retail-agent-turn",
         }
+        turn.message_offset = len(self.graph.get_state(self._thread(turn.session_id)).values.get("messages", []))
         try:
             out = self.graph.invoke(payload, config)
         except GraphRecursionError:
@@ -150,6 +153,11 @@ class AgentService:
                 f"Sorry - something went wrong on my side and I couldn't finish. Your conversation is safe; "
                 f"please try again. (reference: {turn.trace_id})",
             )
+        except BaseException as e:  # Ctrl-C, UI reruns: close the trace and repair history, then propagate
+            turn.emit("turn_interrupted", error_type=type(e).__name__)
+            self._repair(turn.session_id)
+            self._finish(turn, "error", "")
+            raise
         interrupts = out.get("__interrupt__") if isinstance(out, dict) else None
         if interrupts:
             value = interrupts[0].value
@@ -161,6 +169,11 @@ class AgentService:
         return self._finish(turn, status, text)
 
     def _finish(self, turn: TurnContext, status: str, text: str, interrupt: dict | None = None) -> TurnResult:
+        try:  # the turn's own messages, so a trace alone shows the full correspondence
+            messages = self.graph.get_state(self._thread(turn.session_id)).values.get("messages", [])
+            turn.emit("turn_messages", messages=[compact_message(m, 6000) for m in messages[turn.message_offset:]])
+        except Exception as e:  # noqa: BLE001 - observability must never break the turn
+            log.warning("transcript capture failed: %s", e)
         turn.emit("turn_end", status=status, latency_ms=turn.elapsed_ms, tokens=turn.tokens,
                   tokens_in=turn.tokens_in, tokens_out=turn.tokens_out,
                   tokens_reasoning=turn.tokens_reasoning, llm_calls=turn.llm_calls,
@@ -197,6 +210,14 @@ class AgentService:
             elif isinstance(m, AIMessage) and m.text.strip():
                 out.append(("assistant", m.text))
         return out
+
+    def transcript(self, requester: str, session_id: str) -> list[dict]:
+        """Full redacted conversation incl. tool calls and tool results (owner or admin only)."""
+        values = self.graph.get_state(self._thread(session_id)).values
+        owner = values.get("user_id")
+        if owner and owner != requester and not self.principal(requester).is_admin:
+            raise AccessDenied("You can only inspect your own conversations.")
+        return [compact_message(m, 3000) for m in values.get("messages", [])]
 
     def sessions(self, user_id: str, limit: int = 15) -> list[dict]:
         seen: dict[str, dict] = {}

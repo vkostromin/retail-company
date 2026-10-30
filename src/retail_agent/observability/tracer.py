@@ -112,6 +112,8 @@ class TurnContext:
     llm_calls: int = 0
     cost_usd: float = 0.0
     sql_executed: list[str] = field(default_factory=list)
+    message_offset: int = 0  # conversation length before this turn (for the turn transcript)
+    golden_exclude: frozenset[str] = frozenset()  # eval only: hide these golden trios
     flags: set[str] = field(default_factory=set)
     progress: Callable[[str], None] = lambda _msg: None
 
@@ -135,22 +137,45 @@ def safe_preview(text: str, limit: int = 300) -> str:
     return redacted[:limit]
 
 
+def compact_message(m, limit: int = 1500) -> dict:
+    """Redacted, size-bounded view of one chat message (for transcripts in traces)."""
+    role = {"human": "user", "ai": "assistant", "tool": "tool", "system": "system"}.get(m.type, m.type)
+    text = m.text if hasattr(m, "text") else str(m.content)
+    out: dict = {"role": role, "text": safe_preview(text, limit)}
+    if getattr(m, "tool_calls", None):
+        out["tool_calls"] = [
+            {"name": c["name"], "args": {k: safe_preview(v, 800) if isinstance(v, str) else v
+                                         for k, v in (c.get("args") or {}).items()}}
+            for c in m.tool_calls
+        ]
+    if role == "tool":
+        out["tool"] = getattr(m, "name", None)
+    return out
+
+
 class TraceCallback(BaseCallbackHandler):
     """Records every chat-model call: model, tokens, latency, finish reason, cost."""
 
     def __init__(self, turn: TurnContext):
         self.turn = turn
         self._starts: dict[uuid.UUID, tuple[float, str]] = {}
+        self._prompts: dict[uuid.UUID, dict] = {}
 
     def on_chat_model_start(self, serialized, messages, *, run_id, metadata=None, **kwargs):
         model = (kwargs.get("invocation_params") or {}).get("model") or (metadata or {}).get("ls_model_name", "")
         self._starts[run_id] = (time.monotonic(), model)
+        batch = messages[0] if messages else []
+        self._prompts[run_id] = {
+            "prompt_messages": len(batch),
+            "prompt_last": compact_message(batch[-1], 600) if batch else None,
+        }
 
     def on_llm_end(self, response, *, run_id, **kwargs):
         started, model = self._starts.pop(run_id, (time.monotonic(), ""))
-        usage, finish = {}, None
+        usage, finish, reply = {}, None, {}
         try:
             msg = response.generations[0][0].message
+            reply = compact_message(msg, 800)
             usage = msg.usage_metadata or {}
             finish = msg.response_metadata.get("finish_reason")
             model = msg.response_metadata.get("model_name") or model
@@ -168,7 +193,8 @@ class TraceCallback(BaseCallbackHandler):
         self.turn.emit(
             "llm_call", model=model, input_tokens=tin, output_tokens=tout, reasoning_tokens=reasoning,
             latency_ms=int((time.monotonic() - started) * 1000), finish_reason=finish,
-            cost_usd=round(cost, 6),
+            cost_usd=round(cost, 6), reply_preview=reply.get("text"), tool_calls=reply.get("tool_calls"),
+            **self._prompts.pop(run_id, {}),
         )
 
     def on_llm_error(self, error, *, run_id, **kwargs):

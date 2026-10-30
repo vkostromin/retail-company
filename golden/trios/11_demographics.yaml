@@ -14,6 +14,6 @@ sql: |
   GROUP BY age_band, u.gender
   ORDER BY age_band, u.gender
 report: >
-  Spend per customer is remarkably even across age bands and genders; differences are within a few
-  percent, so targeting should be driven by category interest rather than demographics.
+  Report revenue per customer by age band and gender, say whether the differences are material, and recommend demographic targeting only if they are.
+eval_question: Which age and gender segment spends the most per customer?
 tags: [customers, demographics, age, gender, segments]
