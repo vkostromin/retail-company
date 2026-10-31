@@ -246,7 +246,7 @@ See [evaluation.md](evaluation.md). In summary:
 - **Report checks (run in the eval):** `save_report` ran; every persona section is present; 3–5 action items, each with an owner and a numeric target; share of report numbers traceable to query results is recorded.
 - **Golden trios as tests:** each trio is graded leave-one-out, which covers the brief's own examples (state underspending, churn spike, Q1 report, top customers).
 - **UX:** task success, turns-to-answer, latency p95, confirmation friction (cancel rate), abandonment, and moderated sessions with executives.
-- **Current results:** analysis 10/10, red team 14/14 (see [`evals/results/latest.md`](../evals/results/latest.md)).
+- **Current results:** red team 14/14; analysis 18/21 (86%), with the three failures analysed in [evaluation.md](evaluation.md) (see [`evals/results/latest.md`](../evals/results/latest.md)).
 
 ### Requirement 7: Observability (prototype: fully implemented)
 
