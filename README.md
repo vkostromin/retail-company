@@ -11,7 +11,6 @@ Built with **LangGraph + Gemini + BigQuery** (`bigquery-public-data.thelook_ecom
 | Quality assurance & latest eval results | [docs/evaluation.md](docs/evaluation.md) · [evals/results/latest.md](evals/results/latest.md) |
 | Observability: events, metrics, debugging | [docs/observability.md](docs/observability.md) |
 | Assumptions & questions for OpsFleet | [docs/assumptions-and-questions.md](docs/assumptions-and-questions.md) |
-| How AI was used to build it | [docs/ai-usage.md](docs/ai-usage.md) |
 
 ## What it does
 
@@ -186,7 +185,7 @@ config/         settings.yaml · users.yaml · persona.yaml (seed)
 golden/trios/   analyst Question → SQL → Report trios
 evals/          datasets, run_evals.py, results
 tests/          offline tests with fake LLM/BigQuery
-docs/           architecture, technical design, evaluation, observability, assumptions, AI usage
+docs/           architecture, technical design, evaluation, observability, assumptions
 ```
 
 Runtime data (gitignored):
