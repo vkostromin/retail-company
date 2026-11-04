@@ -1,7 +1,7 @@
 """Small-group protection on query results (k-anonymity style, k = 5).
 
-The SQL guard already rejects demographic lookups for specific customer ids. This layer
-covers what reaches the model:
+The SQL guard is the enforcement point: demographics only in aggregates with a minimum
+group size added to the query. This layer is a backstop on what reaches the model:
   A. individual-level rows (a customer id column) never carry age/gender/city;
   B. demographic breakdowns drop groups smaller than K customers when the result has a
      customer-count column.
@@ -16,7 +16,7 @@ import re
 import pandas as pd
 
 K = 5
-_IDENTIFIER = re.compile(r"^(user_id|customer_id|user|customer|users_id)$", re.I)
+_IDENTIFIER = re.compile(r"^(id|user_id|customer_id|user|customer|users_id)$", re.I)
 _QUASI = re.compile(r"^(age|gender|city|.*_age|.*_city|age_.*|.*_gender)$", re.I)
 _GROUP_SIZE = re.compile(r"(customers|users|buyers|shoppers|people|customer_count|user_count)$", re.I)
 

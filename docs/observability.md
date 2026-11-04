@@ -17,7 +17,7 @@ Every user turn has a `trace_id`. Each event also carries `session_id` (the conv
 | `sql_attempt` | attempt #, purpose, the model's SQL, **the scoped SQL BigQuery actually ran**, status (`ok/error/rejected/too_expensive/unavailable`), rows, bytes, cache hit, error, **the first 5 result rows the model saw** (after PII/privacy filtering) | Why did the data step fail? Did it self-correct? Was the answer grounded in these rows? |
 | `empty_result` | suggested valid values | Was the filter wrong? |
 | `pii_redaction` | layer (query_result/report/final_answer), counts | Did anything sensitive get near the output? |
-| `privacy_suppression` | demographic columns dropped from customer-level rows, groups < 5 customers suppressed | Did small-group protection change a result? |
+| `privacy_suppression` | backstop on results: demographic columns dropped from customer-level rows, groups < 5 customers suppressed (the SQL guard already adds the threshold to the query) | Did small-group protection change a result? |
 | `turn_messages` | every message of the turn: user text, assistant replies, tool calls with arguments, tool results (redacted, truncated) | What exactly was said between the user, the model and the tools? |
 | `confirmation_requested/shown/accepted/cancelled`, `deletion_executed`, `deletion_undone` | ids, counts, criteria | Who deleted what, when, and with what confirmation? |
 | `budget_exhausted` / `sql_budget_exhausted` | counters | Is the agent looping? |

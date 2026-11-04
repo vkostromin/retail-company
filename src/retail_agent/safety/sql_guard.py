@@ -6,6 +6,7 @@ Before anything reaches BigQuery we:
 1. parse it (sqlglot, BigQuery dialect) and allow exactly one read-only query,
 2. allow only the logical tables (and the query's own CTEs),
 3. reject direct references to PII columns with an actionable message,
+   and allow demographics (age, gender, city) only in aggregates over >= 5 customers,
 4. replace every logical table with a *scoped, PII-free subquery* bound to the
    principal's entitlements through query parameters (never string-spliced),
 5. enforce a row LIMIT.
@@ -44,6 +45,12 @@ LOGICAL_TABLES: dict[str, list[str]] = {
 
 # Quasi-identifiers: harmless in aggregates, re-identifying when tied to one customer.
 QUASI_IDENTIFIERS = {"age", "gender", "city"}
+# Tables that carry them, with the column identifying the customer (the privacy unit).
+PRIVACY_UNITS = {"users": "id", "orders": "user_id"}
+QUASI_BY_TABLE = {"users": QUASI_IDENTIFIERS, "orders": {"gender"}}
+MIN_GROUP_SIZE = 5
+_SAFE_AGGREGATES = (exp.Count, exp.CountIf, exp.Sum, exp.Avg, exp.ApproxDistinct, exp.Stddev,
+                    exp.StddevPop, exp.StddevSamp, exp.Variance, exp.VariancePop)
 
 PII_COLUMNS = {
     "first_name", "last_name", "email", "street_address", "postal_code", "latitude",
@@ -75,6 +82,7 @@ class GuardedQuery:
     sql: str  # rewritten, executable
     params: list = field(default_factory=list)
     tables: set[str] = field(default_factory=set)
+    min_group_size: int | None = None  # set when demographic groups below this size are filtered out
 
 
 @dataclass
@@ -196,14 +204,7 @@ def guard_sql(sql: str, principal: Principal, dataset: str, max_rows: int = 500)
                 "city/state/country/age/gender instead of personal details.",
             )
 
-    if _targets_individual_customers(root) and any(
-        c.name.lower() in QUASI_IDENTIFIERS for c in root.find_all(exp.Column)
-    ):
-        raise SQLGuardError(
-            "individual_demographics",
-            "Demographics (age, gender, city) of specific customers cannot be looked up.",
-            "Analyse demographics for groups of customers instead (e.g. by age band or city across many customers).",
-        )
+    thresholded = _enforce_min_group_size(root, dataset)
 
     used: set[str] = set()
     replacements: list[tuple[exp.Table, exp.Expression]] = []
@@ -248,21 +249,145 @@ def guard_sql(sql: str, principal: Principal, dataset: str, max_rows: int = 500)
         sql=root.sql(dialect="bigquery"),
         params=scope_params(principal),
         tables=used,
+        min_group_size=MIN_GROUP_SIZE if thresholded else None,
     )
 
 
-def _targets_individual_customers(root: exp.Expression) -> bool:
-    """True if the query filters customers by literal id (`users.id = 123`, `user_id IN (1, 2)`)."""
-    users_aliases = {(t.alias or t.name).lower() for t in root.find_all(exp.Table) if t.name.lower() == "users"}
-    for node in root.find_all(exp.EQ, exp.In):
-        cols = [c for c in (node.this, node.expression) if isinstance(c, exp.Column)]
-        literals = [x for x in [node.this, node.expression, *node.expressions] if isinstance(x, exp.Literal)]
-        for col in cols:
-            name, table = col.name.lower(), (col.table or "").lower()
-            is_customer_id = name == "user_id" or (name == "id" and (table in users_aliases or (not table and users_aliases)))
-            if is_customer_id and literals:
-                return True
-    return False
+def _demographics_error(message: str, hint: str) -> SQLGuardError:
+    return SQLGuardError("individual_demographics", message, hint)
+
+
+def _demographic_sources(select: exp.Select, dataset: str) -> dict[str, str]:
+    """alias -> logical table, for tables with demographics read directly in this SELECT's FROM/JOINs."""
+    out: dict[str, str] = {}
+    for src in [select.args.get("from_"), *(select.args.get("joins") or [])]:
+        table = src.this if src is not None else None
+        if isinstance(table, exp.Table):
+            logical = _logical_name(table, dataset)
+            if logical in PRIVACY_UNITS:
+                out[(table.alias or table.name).lower()] = logical
+    return out
+
+
+def _outer_selects(select: exp.Select):
+    """Enclosing SELECTs a correlated reference could reach (a CTE body cannot see the outer query)."""
+    node = select.parent
+    while node is not None and not isinstance(node, exp.CTE):
+        if isinstance(node, exp.Select):
+            yield node
+        node = node.parent
+
+
+def _own(node: exp.Expression, select: exp.Select) -> bool:
+    return node.find_ancestor(exp.Select) is select
+
+
+def _is_aggregating(select: exp.Select) -> bool:
+    return bool(select.args.get("group")) or any(
+        _own(agg, select) and not isinstance(agg.parent, exp.Window)
+        for e in select.expressions for agg in e.find_all(exp.AggFunc)
+    )
+
+
+def _enforce_min_group_size(root: exp.Expression, dataset: str) -> bool:
+    """Demographics only in aggregates over at least MIN_GROUP_SIZE customers.
+
+    Age, gender and city enter a query only where a SELECT reads them from `users` or `orders`
+    (star and whole-row references are rejected, so every read is a named column). Each such
+    SELECT must aggregate, may only use them in group keys, filters and COUNT/SUM/AVG-style
+    aggregates, and gets `HAVING COUNT(DISTINCT customer) >= 5` added. Whatever leaves that
+    SELECT therefore describes groups of at least 5 customers, however the rest of the query
+    renames, filters or nests it. Returns True if any threshold was added.
+    """
+    selects = list(root.find_all(exp.Select))
+    sources = {id(s): _demographic_sources(s, dataset) for s in selects}
+    sites: dict[int, exp.Select] = {}
+
+    for select in selects:
+        if sources[id(select)] and any(
+            isinstance(e, exp.Star) or (isinstance(e, exp.Column) and isinstance(e.this, exp.Star))
+            for e in select.expressions
+        ):
+            raise _demographics_error("SELECT * is not allowed on users or orders.",
+                                      "List the columns you need.")
+
+    for col in root.find_all(exp.Column):
+        block = col.find_ancestor(exp.Select)
+        if block is None or isinstance(col.this, exp.Star):
+            continue
+        name, qualifier = col.name.lower(), (col.table or "").lower()
+        own = sources[id(block)]
+        outer = [sources[id(s)] for s in _outer_selects(block)]
+        output_aliases = {e.alias.lower() for e in block.expressions if isinstance(e, exp.Alias)}
+        if not qualifier and name not in output_aliases and any(name in src for src in (own, *outer)):
+            raise _demographics_error("Whole-row references to users or orders are not allowed.",
+                                      "Select individual columns.")
+        if qualifier:
+            table = own.get(qualifier)
+            if table is None:
+                if any(name in QUASI_BY_TABLE[src[qualifier]] for src in outer if qualifier in src):
+                    raise _demographics_error(
+                        "Age, gender and city must be used in the same SELECT that reads users/orders.",
+                        "Move the condition on age/gender/city into the outer query.")
+                continue
+            if name not in QUASI_BY_TABLE[table]:
+                continue
+        else:
+            if not any(name in QUASI_BY_TABLE[t] for t in own.values()):
+                if any(name in QUASI_BY_TABLE[t] for src in outer for t in src.values()):
+                    raise _demographics_error(
+                        f"Ambiguous reference to '{name}' inside a subquery.",
+                        f"Qualify it with its table alias (e.g. u.{name}).")
+                continue
+        if not _is_aggregating(block):
+            raise _demographics_error(
+                "Age, gender and city are only available in aggregates over groups of customers.",
+                "GROUP BY age band, gender or city and aggregate the measures (COUNT, SUM, AVG). "
+                f"Groups with fewer than {MIN_GROUP_SIZE} customers are removed automatically.")
+        window = col.find_ancestor(exp.Window, exp.Select)
+        if isinstance(window, exp.Window):
+            raise _demographics_error("Window functions over age, gender or city are not allowed.",
+                                      "Aggregate with GROUP BY instead.")
+        agg = col.find_ancestor(exp.AggFunc, exp.Select)
+        if isinstance(agg, exp.AggFunc) and not isinstance(agg, _SAFE_AGGREGATES):
+            raise _demographics_error(
+                f"{type(agg).__name__.upper()} of age, gender or city can reveal one customer's value.",
+                "Use COUNT, SUM or AVG over the group.")
+        sites[id(block)] = block
+
+    for block in sites.values():
+        own = sources[id(block)]
+        for col in block.find_all(exp.Column):
+            if not _own(col, block):
+                continue
+            name = col.name.lower()
+            is_id = name == "id" or name.endswith("_id")
+            if not is_id:
+                continue
+            agg = col.find_ancestor(exp.AggFunc, exp.Select)
+            if isinstance(agg, exp.AggFunc):
+                arg = agg.this.expressions[0] if isinstance(agg.this, exp.Distinct) and len(
+                    agg.this.expressions) == 1 else agg.this
+                if not (isinstance(agg, exp.Count | exp.ApproxDistinct) and arg is col):
+                    raise _demographics_error(
+                        "In queries that use age, gender or city, ids can only be counted.",
+                        "Use COUNT(DISTINCT ...) of ids; filter rows in WHERE instead of inside aggregates.")
+        group = block.args.get("group")
+        if group is not None:
+            for col in group.find_all(exp.Column):
+                table = own.get((col.table or "").lower()) if col.table else None
+                if col.name.lower() == "user_id" or (col.name.lower() == "id" and table == "users"):
+                    raise _demographics_error(
+                        "Demographics cannot be grouped per customer.",
+                        "Compute per-customer metrics in a CTE without demographics, then join users and "
+                        "aggregate by age band, gender or city.")
+        alias, table = next(((a, t) for a, t in own.items() if t == "users"), next(iter(own.items())))
+        unit = exp.column(PRIVACY_UNITS[table], table=alias)
+        block.having(
+            exp.GTE(this=exp.Count(this=exp.Distinct(expressions=[unit])), expression=exp.Literal.number(MIN_GROUP_SIZE)),
+            copy=False,
+        )
+    return bool(sites)
 
 
 def extract_string_filters(sql: str) -> list[StringFilter]:

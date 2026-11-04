@@ -6,7 +6,7 @@ The brief invites questions. These are the ones we would send at kickoff, with t
 |---|---|---|
 | 1 | What does "products related to him" mean: brand ownership, category, department, or explicit product lists? | Additive grants by **brand, category and department** per user (`config/users.yaml`). Orders and customers are visible through in-scope items. |
 | 2 | Which roles exist, and who can edit the persona? | `admin` (CEO and staff: all products, persona editing, all traces) and `analyst` (scoped). |
-| 3 | Is customer-level output allowed at all (e.g. "top customers")? | Yes, by **pseudonymous user id** plus coarse attributes (country, channel). Never names, emails, addresses, phones or coordinates. Production adds a minimum group size of 5 for demographic breakdowns. |
+| 3 | Is customer-level output allowed at all (e.g. "top customers")? | Yes, by **pseudonymous user id** plus coarse attributes (country, channel). Never names, emails, addresses, phones or coordinates. Age, gender and city only in aggregates over at least 5 customers, never per customer. |
 | 4 | Are city/state considered sensitive? | Not PII on their own. Kept, but aggregated. Exact address and lat/long are removed. |
 | 5 | Retention and undo for deleted reports? | Soft delete, `/undo` within 30 minutes, then hard purge after 30 days (production job). Audit log kept for 1 year. |
 | 6 | Do reports belong to a user or a team? Can they be shared? | Owned by the creating user; users can delete only their own. Sharing is future work, with deletion staying owner-only. |

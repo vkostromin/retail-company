@@ -127,7 +127,7 @@ def run_sql(ctx: ToolContext, args: RunSQLArgs) -> dict:
     except SQLGuardError as e:
         ctx.bump("sql_errors")
         ctx.turn.emit("sql_attempt", status="rejected", code=e.code, error=e.message, **base)
-        if e.code in {"pii_column", "not_read_only", "forbidden_function", "unknown_table", "multiple_statements"}:
+        if e.code in {"pii_column", "individual_demographics", "not_read_only", "forbidden_function", "unknown_table", "multiple_statements"}:
             ctx.turn.emit("guardrail_block", layer="sql_guard", category=e.code)
         return e.to_dict()
 
@@ -183,11 +183,16 @@ def run_sql(ctx: ToolContext, args: RunSQLArgs) -> dict:
         return {
             "status": "ok", "row_count": 0, "rows": [],
             "hint": "The query returned no rows. Check filter values (exact spelling/case as stored) and the "
-                    "date range before concluding there is no data.",
+                    "date range before concluding there is no data."
+                    + (f" Groups with fewer than {guarded.min_group_size} customers are removed from demographic "
+                       "queries, so a narrow segment can return nothing." if guarded.min_group_size else ""),
             "valid_values": hints,
         }
     preview = df.head(s.preview_rows)
     out = {"status": "ok", "row_count": len(df), "columns": list(df.columns), "rows": _records(preview)}
+    if guarded.min_group_size:
+        out["privacy_note"] = (f"Demographic groups with fewer than {guarded.min_group_size} customers are excluded, "
+                               "so group totals can be below overall totals.")
     if privacy.get("dropped_columns"):
         out["privacy_note"] = (f"Removed {privacy['dropped_columns']} from customer-level rows: demographics are "
                                "only available for groups of customers.")

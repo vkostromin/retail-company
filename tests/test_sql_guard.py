@@ -52,10 +52,17 @@ def test_ceo_rewrite_strips_pii_and_keeps_aliases(ceo):
     sqlglot.parse_one(q.sql, read="bigquery")  # still valid SQL
 
 
-def test_select_star_on_users_only_exposes_safe_columns(ceo):
-    q = g("SELECT * FROM users", ceo)
+def test_users_source_only_exposes_safe_columns(ceo):
+    q = g("SELECT id, country FROM users", ceo)
     inner = q.sql.split("FROM (", 1)[1]
     assert "street_address" not in inner and "latitude" not in inner
+
+
+def test_select_star_on_users_rejected(ceo):
+    # A star would return age, gender and city per customer.
+    with pytest.raises(SQLGuardError) as e:
+        g("SELECT * FROM users", ceo)
+    assert e.value.code == "individual_demographics"
 
 
 def test_scoped_principal_gets_parameterized_filters_on_every_table(alice):
@@ -84,9 +91,9 @@ def test_cte_references_are_not_rewritten_but_their_sources_are(alice):
 
 
 def test_limit_enforced(ceo):
-    assert "LIMIT 500" in g("SELECT * FROM orders", ceo).sql
-    assert "LIMIT 10" in g("SELECT * FROM orders LIMIT 10", ceo).sql
-    assert "LIMIT 500" in g("SELECT * FROM orders LIMIT 100000", ceo).sql
+    assert "LIMIT 500" in g("SELECT * FROM products", ceo).sql
+    assert "LIMIT 10" in g("SELECT * FROM products LIMIT 10", ceo).sql
+    assert "LIMIT 500" in g("SELECT * FROM products LIMIT 100000", ceo).sql
     assert "LIMIT 500" in g("SELECT status FROM orders UNION ALL SELECT status FROM order_items", ceo).sql
 
 

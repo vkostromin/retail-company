@@ -144,7 +144,7 @@ Defense in depth, with each layer independent:
 | 4 | **Scope rewrite (row/column security)** | `sql_guard.scoped_table_sql` | Each logical table is replaced by a **PII-free, entitlement-filtered subquery** with **parameterized** scope values (`@scope_brands` etc., never string-spliced). `SELECT *` from `users` only yields safe columns. Out-of-scope products are physically absent. |
 | 5 | **Result sanitizer** | [`pii.py`](../src/retail_agent/safety/pii.py) | PII-looking columns are dropped and email, phone, street address and lat/long patterns are redacted *before* results reach the LLM. |
 | 6 | **Report & output guard** | `save_report`, `guard_output` | Final redaction pass on saved reports and on every answer. |
-| 6b | **Small-group protection** | [`privacy.py`](../src/retail_agent/safety/privacy.py), `sql_guard` | Demographic lookups for specific customer ids (`WHERE users.id = …` with age/gender/city) are rejected; demographics are stripped from customer-level rows; demographic groups smaller than 5 customers are suppressed when the result has a customer-count column. |
+| 6b | **Minimum group size for demographics** | `sql_guard` (`_enforce_min_group_size`); [`privacy.py`](../src/retail_agent/safety/privacy.py) as a backstop | Age, gender and city can enter a query only where a SELECT reads them from `users` or `orders` (`SELECT *` and whole-row references are rejected, so every read is a named column). That SELECT must aggregate, may use them only in group keys, filters and COUNT/SUM/AVG-type aggregates (not MIN/MAX/ANY_VALUE/STRING_AGG or window functions), may only count ids, and gets `HAVING COUNT(DISTINCT customer) >= 5` appended. Every value that leaves it therefore describes at least 5 customers, however the rest of the query nests, renames or filters it. Edge cases (range and expression filters, joins via an order, CTEs, scalar subqueries, renamed columns, conditional aggregates, membership tests) are in [`tests/test_privacy.py`](../tests/test_privacy.py) and three live red-team cases. |
 | 7 | **Audit** | trace events | Every block and redaction is logged with its layer and category, without logging the raw PII. |
 
 Why it holds: layers 3 and 4 do not depend on the model at all. The tests show this in [`test_classifier_outage_fails_open_but_data_layer_still_enforces`](../tests/test_guardrails_and_persona.py): with the classifier down, a request for emails still never reaches BigQuery. Because of that, the input guard **fails open** when it is unavailable: availability is kept and safety is not lost.
@@ -157,7 +157,7 @@ Why it holds: layers 3 and 4 do not depend on the model at all. The tests show t
 - The agent's service account sees only **authorized views**.
 - **Row-level access policies** use `SESSION_USER()` or a per-request principal through a connection property.
 - **Policy tags** on PII columns use the *nullify* or *hash* masking rules.
-- **k-anonymity**: a minimum group size of 5, enforced in the database by **BigQuery aggregation threshold analysis rules** on the users view (`privacy_unit_column = user_id`, `threshold = 5`). The prototype approximates this in code (layer 6b); its group-size check relies on the result carrying a customer-count column, which is why the database rule is the production answer.
+- **k-anonymity**: a minimum group size of 5, enforced in the database by **BigQuery aggregation threshold analysis rules** on the users view (`privacy_unit_column = user_id`, `threshold = 5`). The prototype enforces the same contract in the SQL rewrite (layer 6b). Both share the known limit of aggregation thresholds: comparing two overlapping groups (a city with and without one customer), or a condition on a near-unique field such as an exact timestamp inside an aggregate, can still reveal one value. For demographic queries production adds BigQuery differential privacy (`SELECT WITH DIFFERENTIAL_PRIVACY`) and alerts on repeated narrow queries.
 
 **Entitlement model.** Grants are additive (`brands ∪ categories ∪ departments`). Orders and users are scoped *through* in-scope order items: Alice sees orders and customers that bought Women's products. For scoped users, `orders.num_of_item` is recomputed from in-scope items only, so it never reveals out-of-scope purchases (Bob's average items per order is 1.02, versus 1.45 across all brands).
 
@@ -246,7 +246,7 @@ See [evaluation.md](evaluation.md). In summary:
 - **Report checks (run in the eval):** `save_report` ran; every persona section is present; 3–5 action items, each with an owner and a numeric target; share of report numbers traceable to query results is recorded.
 - **Golden trios as tests:** each trio is graded leave-one-out, which covers the brief's own examples (state underspending, churn spike, Q1 report, top customers).
 - **UX:** task success, turns-to-answer, latency p95, confirmation friction (cancel rate), abandonment, and moderated sessions with executives.
-- **Current results:** red team 14/14; analysis 18/21 (86%), with the three failures analysed in [evaluation.md](evaluation.md) (see [`evals/results/latest.md`](../evals/results/latest.md)).
+- **Current results:** red team 17/17 (re-run after the demographics fix); analysis 18/21 (86%), with the three failures analysed in [evaluation.md](evaluation.md) (see [`evals/results/latest.md`](../evals/results/latest.md)).
 
 ### Requirement 7: Observability (prototype: fully implemented)
 
@@ -355,7 +355,7 @@ CHART_TOOLS = [ToolSpec("make_chart", "Render a chart from a query", ChartArgs, 
 
 ## 10. Known limitations and next steps
 
-- **Small-group protection is heuristic in the prototype:** suppression of small demographic groups needs a customer-count column in the result. A query that groups by city and returns only revenue is not checked. Production enforces k = 5 in BigQuery (aggregation threshold rules). Order-level fields such as `orders.status` describe the whole order, not only in-scope items.
+- **Minimum group size is not differential privacy:** the guard guarantees each demographic value covers at least 5 customers, but differencing overlapping groups or filtering on a near-unique field inside an aggregate is not prevented (see layer 6b). Production adds BigQuery differential privacy for demographic queries. Order-level fields such as `orders.status` describe the whole order, not only in-scope items.
 - **Regex PII detection** misses free-text names. DLP is needed in production; the guard architecture makes this a drop-in change.
 - **No response streaming** of tokens yet; progress events are streamed instead.
 - **Preferences are explicit only**; the implicit extractor is designed but not built.

@@ -56,11 +56,11 @@ The agent can also handle:
 | # | Requirement | In the prototype | Key code |
 |---|---|---|---|
 | 1 | Hybrid intelligence (Golden bucket) | 11 analyst trios (Q → SQL → report); Gemini-embedding retrieval with BM25 fallback; top-3 injected as an "analyst playbook". Production ingestion and update pipeline is designed. | [`golden.py`](src/retail_agent/golden.py), [`golden/trios`](golden/trios) |
-| 2 | **Safety & PII** ✅ | Identity → input guard (regex + multilingual Flash-Lite classifier) → **sqlglot SQL guard** → **scope rewrite** to PII-free, entitlement-filtered, parameterized subqueries (scoped `orders.num_of_item` counts only in-scope items) → result sanitizer → small-group protection (no demographics for specific customers, groups < 5 suppressed) → output redaction. *Limit:* small-group suppression needs a customer-count column in the result; production enforces k = 5 in BigQuery aggregation threshold rules. | [`safety/`](src/retail_agent/safety) |
+| 2 | **Safety & PII** ✅ | Identity → input guard (regex + multilingual Flash-Lite classifier) → **sqlglot SQL guard** → **scope rewrite** to PII-free, entitlement-filtered, parameterized subqueries (scoped `orders.num_of_item` counts only in-scope items) → result sanitizer → **minimum group size**: age, gender and city only in aggregates, with `HAVING COUNT(DISTINCT customer) >= 5` added to the query that reads them → output redaction. *Limit:* like any aggregation threshold, differencing two overlapping groups is not prevented; production adds BigQuery differential privacy for demographic queries. | [`safety/`](src/retail_agent/safety) |
 | 3 | **High-stakes oversight** ✅ | The model can only *request* deletion. A deterministic LangGraph `interrupt()` shows the exact reports; the server validates a one-time token, the owner and a typed phrase for bulk deletions; soft delete + `/undo` + audit log | [`graph.py`](src/retail_agent/agent/graph.py), [`report_tools.py`](src/retail_agent/tools/report_tools.py) |
 | 4 | Learning loop | Explicit user preferences (`remember_preference`, `/prefs`) injected into prompts; system-level loop designed (feedback → evals/golden → gated rollout) | [`memory/`](src/retail_agent/memory) |
 | 5 | **Resilience** ✅ | Dry-run + error feedback self-correction, empty-result diagnosis, attempt/tool/token budgets, retries with jitter, circuit breakers, fallback model, rate limiter, graceful degradation, crash containment and history repair, fault injection | [`resilience/`](src/retail_agent/resilience), [`llm.py`](src/retail_agent/agent/llm.py) |
-| 6 | QA | 87 offline tests; red-team gate (14/14); LLM-judged accuracy suite against reference SQL results plus all 11 golden trios leave-one-out (latest: 18/21, failures analysed in [evaluation.md](docs/evaluation.md)) | [`tests/`](tests), [`evals/`](evals) |
+| 6 | QA | 122 offline tests; red-team gate (17/17); LLM-judged accuracy suite against reference SQL results plus all 11 golden trios leave-one-out (latest: 18/21, failures analysed in [evaluation.md](docs/evaluation.md)) | [`tests/`](tests), [`evals/`](evals) |
 | 7 | **Observability** ✅ | Per-turn events: LLM calls with replies and requested tools, SQL attempts with the scoped SQL BigQuery ran and the rows the model saw, verdicts, retries, confirmations, and the turn's full redacted message exchange. `/trace`, `/transcript`, `/stats`, web Traces page; optional Langfuse | [`observability/`](src/retail_agent/observability) |
 | 8 | Persona agility | Versioned persona store; **web admin page** (preview, diff, publish, rollback); applies to the next message everywhere, with no restart | [`persona/`](src/retail_agent/persona), [`web/views/persona.py`](web/views/persona.py) |
 
@@ -152,7 +152,7 @@ RA_FAKE_FAIL=bigquery retail-agent chat --user bob        # warehouse down → g
 ## Tests & evaluation
 
 ```bash
-make test       # 87 offline tests: guard, scope, privacy, PII, trace reconstruction, deletion flow, self-correction, budgets, outages, fallback, persona
+make test       # 122 offline tests: guard, scope, privacy (adversarial demographic lookups), PII, trace reconstruction, deletion flow, self-correction, budgets, outages, fallback, persona
 make redteam    # live safety gate (must be 100%)
 make eval       # live accuracy (Gemini 3.1 Pro as judge) + red team → evals/results/latest.md
 ```
