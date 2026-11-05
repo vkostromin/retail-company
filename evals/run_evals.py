@@ -135,14 +135,26 @@ def report_checks(svc: AgentService, user: str, events: list[dict], evidence: st
     body = report.body_md if report else ""
     sections = svc.persona().persona.report_sections
     missing = [sec for sec in sections if sec.lower() not in body.lower()]
-    # Action items: list blocks under the heading that mentions "action" and has the most items.
+    # Action items: list items or table rows under the heading that mentions "action" and has the most items.
     lines = body.splitlines()
+
+    def cells(ln: str) -> list[str]:
+        return [c.strip() for c in ln.strip().strip("|").split("|")]
 
     def items_after(start: int) -> list[str]:
         blocks: list[str] = []
+        header: list[str] | None = None
         for ln in lines[start + 1:]:
             if ln.startswith("#"):
                 break
+            if ln.lstrip().startswith("|"):
+                row = cells(ln)
+                if header is None:
+                    header = row
+                elif not all(re.fullmatch(r":?-+:?", c) for c in row if c):
+                    # Label each non-empty cell with its column, so "owner"/"target" match only filled cells.
+                    blocks.append(" | ".join(f"{h}: {c}" for h, c in zip(header, row, strict=False) if c))
+                continue
             if re.match(r"^(\d+[.)]|[-*])\s", ln):
                 blocks.append(ln)
             elif blocks and ln.strip():

@@ -42,6 +42,11 @@ def test_ceo_orders_keep_original_count(ceo):
     "SELECT gender, STRING_AGG(city) FROM users GROUP BY gender",
     "SELECT gender, AVG(IF(id = 123, age, NULL)) FROM users GROUP BY gender",       # singled out inside an aggregate
     "SELECT city, SUM(IF(id = 123, 1, 0)) AS hit FROM users GROUP BY city",         # membership test per city
+    "SELECT u.city, COUNT(DISTINCT IF(u.id = 123, oi.order_id, NULL)) FROM users u "
+    "JOIN order_items oi ON oi.user_id = u.id GROUP BY u.city",                     # id in the condition
+    "SELECT city, COUNT(DISTINCT NULLIF(id, 123)) FROM users GROUP BY city",         # id transformed
+    "SELECT city, COUNT(DISTINCT IF(age > 30, id, 0)) FROM users GROUP BY city",     # non-null otherwise branch
+    "SELECT gender, COUNTIF(id = 123) FROM users GROUP BY gender",
     "SELECT id, AVG(age) OVER () FROM users",                                       # window, not a group
     "SELECT city, COUNT(*) OVER (PARTITION BY city) FROM users",
     "SELECT oi.user_id, u.age, SUM(oi.sale_price) FROM order_items oi JOIN users u ON u.id = oi.user_id "
@@ -63,6 +68,9 @@ def test_demographics_of_individual_customers_rejected(sql, alice, ceo):
     "SELECT COUNT(*) FROM users WHERE id = 123 AND age = 34",                        # membership test: suppressed
     "SELECT AVG(age) FROM users WHERE id BETWEEN 1 AND 3",                           # 3 customers: suppressed
     "SELECT b.city, b.n FROM (SELECT city, COUNT(*) AS n FROM users GROUP BY city) b",
+    "SELECT u.gender, COUNT(DISTINCT IF(oi.status NOT IN ('Cancelled','Returned'), oi.order_id, NULL)) AS net_orders, "
+    "COUNT(DISTINCT CASE WHEN oi.status = 'Returned' THEN oi.order_id END) AS returned_orders "
+    "FROM users u JOIN order_items oi ON oi.user_id = u.id GROUP BY u.gender",      # net orders per segment
     "WITH spend AS (SELECT user_id, SUM(sale_price) AS s FROM order_items GROUP BY user_id) "
     "SELECT u.gender, AVG(spend.s) AS avg_spend FROM spend JOIN users u ON u.id = spend.user_id GROUP BY u.gender",
     "SELECT CASE WHEN u.age < 25 THEN '<25' ELSE '25+' END AS age_band, u.gender, COUNT(DISTINCT u.id) AS customers, "
@@ -73,6 +81,14 @@ def test_demographic_aggregates_get_minimum_group_size(sql, alice):
     g = guard_sql(sql, alice, DATASET)
     assert g.min_group_size == 5
     assert "HAVING" in g.sql and "COUNT(DISTINCT" in g.sql and ">= 5" in g.sql
+
+
+def test_per_customer_grouping_gets_the_restructuring_hint(alice):
+    sql = ("WITH x AS (SELECT u.id AS user_id, u.age, COUNT(DISTINCT IF(oi.status != 'Cancelled', oi.order_id, NULL)) AS n "
+           "FROM users u JOIN order_items oi ON oi.user_id = u.id GROUP BY u.id, u.age) SELECT age, AVG(n) FROM x GROUP BY age")
+    with pytest.raises(SQLGuardError) as e:
+        guard_sql(sql, alice, DATASET)
+    assert "grouped per customer" in e.value.message and "CTE without" in e.value.hint
 
 
 def test_existing_having_is_kept(alice):

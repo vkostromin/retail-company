@@ -289,6 +289,33 @@ def _is_aggregating(select: exp.Select) -> bool:
     )
 
 
+def _is_id(col: exp.Column) -> bool:
+    name = col.name.lower()
+    return name == "id" or name.endswith("_id")
+
+
+def _counted_id(col: exp.Column, agg: exp.AggFunc) -> bool:
+    """An id inside an aggregate is safe only as the counted value: COUNT([DISTINCT] id), or the
+    value branch of IF/CASE whose condition does not mention ids (e.g. net orders per segment)."""
+    if not isinstance(agg, exp.Count | exp.ApproxDistinct):
+        return False
+    arg = agg.this
+    if isinstance(arg, exp.Distinct) and len(arg.expressions) == 1:
+        arg = arg.expressions[0]
+    if arg is col:
+        return True
+    if isinstance(arg, exp.If):
+        branches, otherwise = [arg], arg.args.get("false")
+    elif isinstance(arg, exp.Case):
+        branches, otherwise = arg.args.get("ifs") or [], arg.args.get("default")
+    else:
+        return False
+    if otherwise is not None and not isinstance(otherwise, exp.Null):
+        return False
+    return any(b.args.get("true") is col for b in branches) and not any(
+        _is_id(c) for b in branches for c in b.this.find_all(exp.Column))
+
+
 def _enforce_min_group_size(root: exp.Expression, dataset: str) -> bool:
     """Demographics only in aggregates over at least MIN_GROUP_SIZE customers.
 
@@ -357,21 +384,6 @@ def _enforce_min_group_size(root: exp.Expression, dataset: str) -> bool:
 
     for block in sites.values():
         own = sources[id(block)]
-        for col in block.find_all(exp.Column):
-            if not _own(col, block):
-                continue
-            name = col.name.lower()
-            is_id = name == "id" or name.endswith("_id")
-            if not is_id:
-                continue
-            agg = col.find_ancestor(exp.AggFunc, exp.Select)
-            if isinstance(agg, exp.AggFunc):
-                arg = agg.this.expressions[0] if isinstance(agg.this, exp.Distinct) and len(
-                    agg.this.expressions) == 1 else agg.this
-                if not (isinstance(agg, exp.Count | exp.ApproxDistinct) and arg is col):
-                    raise _demographics_error(
-                        "In queries that use age, gender or city, ids can only be counted.",
-                        "Use COUNT(DISTINCT ...) of ids; filter rows in WHERE instead of inside aggregates.")
         group = block.args.get("group")
         if group is not None:
             for col in group.find_all(exp.Column):
@@ -379,8 +391,17 @@ def _enforce_min_group_size(root: exp.Expression, dataset: str) -> bool:
                 if col.name.lower() == "user_id" or (col.name.lower() == "id" and table == "users"):
                     raise _demographics_error(
                         "Demographics cannot be grouped per customer.",
-                        "Compute per-customer metrics in a CTE without demographics, then join users and "
+                        "Compute per-customer metrics in a CTE without age/gender/city, then join users and "
                         "aggregate by age band, gender or city.")
+        for col in block.find_all(exp.Column):
+            if not _own(col, block) or not _is_id(col):
+                continue
+            agg = col.find_ancestor(exp.AggFunc, exp.Select)
+            if isinstance(agg, exp.AggFunc) and not _counted_id(col, agg):
+                raise _demographics_error(
+                    "In queries that use age, gender or city, ids can only be counted.",
+                    "Use COUNT(DISTINCT id) or COUNT(DISTINCT IF(<condition without ids>, id, NULL)); "
+                    "filter rows in WHERE instead of comparing ids inside aggregates.")
         alias, table = next(((a, t) for a, t in own.items() if t == "users"), next(iter(own.items())))
         unit = exp.column(PRIVACY_UNITS[table], table=alias)
         block.having(
